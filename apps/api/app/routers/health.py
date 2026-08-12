@@ -12,7 +12,7 @@ async def health_check():
         "status": "ok",
         "ai": {
             "provider": "gemini",
-            "model": "gemini-2.0-flash",
+            "model": "gemini-flash-lite-latest",
             "configured": bool(settings.gemini_api_key),
         },
     }

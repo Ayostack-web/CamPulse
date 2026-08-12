@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Vylix Hetzner Deployment ==="
+echo "=== Vylix Contabo VPS Deployment ==="
 
 # Update system
 echo "[1/6] Updating system..."

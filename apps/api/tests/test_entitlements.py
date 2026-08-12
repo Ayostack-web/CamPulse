@@ -132,8 +132,8 @@ async def test_storage_allowance_and_usage(db_schema):
         user = await _make_user(db)
         assert await storage_allowance(db, user.id) == plans.FREE_STORAGE_BYTES
 
-        sub = await _make_sub(db, user.id, "semester")  # 150 MB
-        assert await storage_allowance(db, user.id) == 150 * 1024 * 1024
+        sub = await _make_sub(db, user.id, "semester")
+        assert await storage_allowance(db, user.id) == plans.get_plan("semester").storage_bytes
 
         course = Course(
             id=str(uuid.uuid4()), code="ENT101", title="Entitlement Course",

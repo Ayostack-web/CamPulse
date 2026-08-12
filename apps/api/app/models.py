@@ -336,6 +336,7 @@ class Material(Base):
     is_past_question: Mapped[bool] = mapped_column(Boolean, default=False)
     exam_year: Mapped[int | None] = mapped_column(Integer)
     semester: Mapped[str | None] = mapped_column(String)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
 
     topic: Mapped["Topic"] = relationship(back_populates="materials")
     uploader: Mapped["User"] = relationship(back_populates="materials")
@@ -348,6 +349,7 @@ class Material(Base):
         Index("ix_materials_topic_id_uploaded_at", "topic_id", "uploaded_at"),
         Index("ix_materials_topic_id_is_seed", "topic_id", "is_seed"),
         Index("ix_materials_is_seed", "is_seed"),
+        Index("ix_materials_content_hash", "content_hash"),
     )
 
 
@@ -879,7 +881,7 @@ class SolvedQuestion(Base):
     answer_text: Mapped[str | None] = mapped_column(Text)
     year: Mapped[int | None] = mapped_column(Integer)
     semester: Mapped[str | None] = mapped_column(String)
-    model: Mapped[str] = mapped_column(String, default="gemini-2.0-flash")
+    model: Mapped[str] = mapped_column(String, default="gemini-flash-lite-latest")
     cost_usd: Mapped[float] = mapped_column(default=0.0)
     status: Mapped[SolvedQuestionStatus] = mapped_column(
         Enum(SolvedQuestionStatus, name="SolvedQuestionStatus", native_enum=False, validate_strings=True),

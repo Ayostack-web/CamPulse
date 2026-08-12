@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from app.core.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.postgres import get_connection
+from app import plans
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -80,6 +81,31 @@ def _file_hash_exists(content_hash: str) -> str | None:
         return row["id"] if row else None
 
 
+def _storage_used(user_id: str) -> int:
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(SUM(file_size), 0) AS total FROM materials WHERE uploader_id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+        return int(row["total"] or 0)
+
+
+def _storage_allowance(user_id: str) -> int:
+    """Mirror of ``entitlements.storage_allowance`` for the sync task context."""
+    allowance = plans.FREE_STORAGE_BYTES
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT storage_bytes_total FROM subscriptions "
+            "WHERE user_id = %s AND status = 'active' AND expires_at > NOW()",
+            (user_id,),
+        )
+        for row in cur.fetchall():
+            if row["storage_bytes_total"]:
+                allowance = max(allowance, row["storage_bytes_total"])
+    return allowance
+
+
 def _ensure_content_hash_column() -> None:
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute("ALTER TABLE materials ADD COLUMN IF NOT EXISTS content_hash TEXT")
@@ -116,14 +142,29 @@ def _match_course(folder_name: str) -> str | None:
         return row["id"] if row else None
 
 
-def _import_single(user_id: str, access_token: str, storage, file_id: str, topic_id: str) -> bool:
+def _import_single(
+    user_id: str, access_token: str, storage, file_id: str, topic_id: str, remaining: int
+) -> tuple[str, int]:
+    """Import one Google Drive file. Returns (status, bytes_stored).
+
+    ``status`` is one of:
+      - "imported"  — stored; ``bytes_stored`` is the size that now counts
+        against the user's quota.
+      - "duplicate" — content already in the vault; nothing new stored.
+      - "already"   — this Drive file was imported before.
+      - "quota"     — importing it would exceed the user's storage allowance.
+    """
     from app.services import google_drive
 
     if _file_already_imported(user_id, file_id):
-        return False
+        return "already", 0
 
     file_meta = _run_async(google_drive.get_file_metadata(access_token, file_id))
     file_data = _run_async(google_drive.download_drive_file(access_token, file_id))
+
+    from app.services.pdf_compressor import compress_pdf_bytes
+    file_data = compress_pdf_bytes(file_data, file_meta.name)
+
     content_hash = _hash_file(file_data)
 
     existing = _file_hash_exists(content_hash)
@@ -132,7 +173,10 @@ def _import_single(user_id: str, access_token: str, storage, file_id: str, topic
             user_id, file_id, file_meta.name, file_meta.mime_type,
             len(file_data), existing, "imported",
         )
-        return True
+        return "duplicate", 0
+
+    if len(file_data) > remaining:
+        return "quota", 0
 
     material_id = str(uuid.uuid4())
     ext = file_meta.name.split(".")[-1] if "." in file_meta.name else "pdf"
@@ -154,7 +198,7 @@ def _import_single(user_id: str, access_token: str, storage, file_id: str, topic
         user_id, file_id, file_meta.name, file_meta.mime_type,
         len(file_data), material_id, "imported",
     )
-    return True
+    return "imported", len(file_data)
 
 
 def _create_import_record(
@@ -199,10 +243,21 @@ def import_drive_files(
     except RuntimeError as e:
         return {"imported": 0, "skipped": 0, "errors": [str(e)]}
 
+    remaining = _storage_allowance(user_id) - _storage_used(user_id)
+
     for file_id in file_ids[:20]:
         try:
-            if _import_single(user_id, access_token, storage, file_id, topic_id):
+            status, size = _import_single(user_id, access_token, storage, file_id, topic_id, remaining)
+            if status == "imported":
                 imported += 1
+                remaining -= size
+            elif status == "quota":
+                _create_import_record(
+                    user_id, file_id, f"quota_{file_id}", "unknown",
+                    0, None, "failed", "STORAGE_LIMIT_REACHED",
+                )
+                errors.append(f"{file_id}: STORAGE_LIMIT_REACHED")
+                break
             else:
                 skipped += 1
         except Exception as e:
@@ -257,14 +312,25 @@ def auto_import_drive(self, user_id: str) -> dict:
     folders = _run_async(google_drive.list_drive_folders(access_token, "root"))
     result["folders_scanned"] = len(folders)
 
+    remaining = _storage_allowance(user_id) - _storage_used(user_id)
+
     try:
         root_files, _ = _run_async(google_drive.list_drive_files(access_token, None, 100))
         for f in root_files:
             result["pdfs_found"] += 1
             topic_id = _get_or_create_topic(general_course_id, "Uncategorized", user_id)
             try:
-                if _import_single(user_id, access_token, storage, f.id, topic_id):
+                status, size = _import_single(user_id, access_token, storage, f.id, topic_id, remaining)
+                if status == "imported":
                     result["imported"] += 1
+                    remaining -= size
+                elif status == "quota":
+                    _create_import_record(
+                        user_id, f.id, f.name, "unknown",
+                        0, None, "failed", "STORAGE_LIMIT_REACHED",
+                    )
+                    result["errors"].append(f"{f.name}: storage limit reached")
+                    return result
                 else:
                     result["skipped"] += 1
             except Exception as e:
@@ -282,8 +348,17 @@ def auto_import_drive(self, user_id: str) -> dict:
             topic_id = _get_or_create_topic(course_id, folder.name, user_id)
             for f in files:
                 try:
-                    if _import_single(user_id, access_token, storage, f.id, topic_id):
+                    status, size = _import_single(user_id, access_token, storage, f.id, topic_id, remaining)
+                    if status == "imported":
                         result["imported"] += 1
+                        remaining -= size
+                    elif status == "quota":
+                        _create_import_record(
+                            user_id, f.id, f.name, "unknown",
+                            0, None, "failed", "STORAGE_LIMIT_REACHED",
+                        )
+                        result["errors"].append(f"{f.name}: storage limit reached")
+                        return result
                     else:
                         result["skipped"] += 1
                 except Exception as e:

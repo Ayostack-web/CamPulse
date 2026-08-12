@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+from typing import Any
 
 import psycopg
 from google import genai
@@ -14,11 +16,58 @@ from app.services.vector_store import VectorStore
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-FLASH_MODEL = "gemini-2.5-flash"
-PRO_MODEL = "gemini-2.5-pro-preview"
+FLASH_MODEL = "gemini-flash-lite-latest"
+PRO_MODEL = "gemini-pro-latest"
 
 _client: genai.Client | None = None
 _vector_store: VectorStore | None = None
+_prompt_cache_client: Any | None = None
+
+
+def _get_prompt_cache_client() -> Any | None:
+    """Lazily connect to Redis for the exact-match response cache; ``None`` when unavailable."""
+    global _prompt_cache_client
+    if _prompt_cache_client is not None:
+        return _prompt_cache_client
+    try:
+        import redis
+
+        client = redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        _prompt_cache_client = client
+    except Exception:
+        logger.warning("Redis unavailable; academic agent prompt cache disabled.")
+        _prompt_cache_client = None
+    return _prompt_cache_client
+
+
+def _prompt_cache_key(model_id: str, prompt: str) -> str:
+    return f"vylix:agent:{model_id}:{hashlib.sha256(prompt.encode()).hexdigest()}"
+
+
+def _prompt_cache_get(key: str) -> str | None:
+    client = _get_prompt_cache_client()
+    if not client:
+        return None
+    try:
+        raw = client.get(key)
+        return raw.decode() if raw is not None else None
+    except Exception:
+        return None
+
+
+def _prompt_cache_set(key: str, value: str) -> None:
+    client = _get_prompt_cache_client()
+    if not client:
+        return
+    try:
+        client.set(key, value, ex=settings.prompt_cache_ttl_seconds)
+    except Exception:
+        pass
 
 
 def _get_client() -> genai.Client:
@@ -135,6 +184,17 @@ def run_vylix_academic_agent(
         f"## Student Request\n{user_prompt}"
     )
 
+    cache_key = _prompt_cache_key(model_id, prompt)
+    cached = _prompt_cache_get(cache_key)
+    if cached is not None:
+        logger.info(
+            "Agent prompt-cache hit user=%s course=%s tier=%s",
+            user_id,
+            course_code,
+            task_tier,
+        )
+        return cached
+
     client = _get_client()
 
     try:
@@ -155,6 +215,8 @@ def run_vylix_academic_agent(
         raise GeminiError(SERVICE_BUSY_MESSAGE)
 
     result = response.text
+
+    _prompt_cache_set(cache_key, result)
 
     try:
         meta = getattr(response, "usage_metadata", None)

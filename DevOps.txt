@@ -1,0 +1,640 @@
+# ============================================================
+# VPS SURVIVAL KIT - Complete Operating Manual
+# ============================================================
+# Save this file as: vps-everything.md
+# Keep it on your desktop for quick reference
+#
+# This single file contains EVERYTHING you need to:
+# - Set up a brand new Contabo VPS from scratch
+# - Manage it day-to-day with essential Linux commands
+# - Deploy code updates using Git
+# - Use Redis for caching and real-time messaging
+# - Manage Docker containers
+# - Troubleshoot common problems
+#
+# Print it, bookmark it, or keep it open in a text editor.
+# You won't need anything else.
+
+# ============================================================
+# SECTION 1: SERVER SETUP SCRIPT
+# ============================================================
+# WHAT THIS DOES:
+# This bash script converts a fresh Ubuntu VPS into a secure,
+# production-ready server. Run it ONCE after creating your VPS.
+#
+# HOW TO USE:
+# 1. Copy this entire script to a file called vps_setup.sh
+# 2. Edit the variables at the top (marked "CHANGE THESE")
+# 3. Upload to your VPS: scp vps_setup.sh root@YOUR_IP:/root/
+# 4. SSH into VPS: ssh root@YOUR_IP
+# 5. Run the script: bash vps_setup.sh
+# 6. Test new user: ssh -p 2222 deploy@YOUR_IP
+
+---BEGIN SCRIPT---
+#!/usr/bin/env bash
+
+# set -e: Stop immediately if any command fails
+# set -u: Treat unset variables as errors
+# set -o pipefail: If any command in a pipe fails, the whole pipe fails
+# These three together are called "strict mode" - ALWAYS use them
+set -euo pipefail
+
+# ============================================================
+# CONFIGURATION - YOU MUST CHANGE THESE VALUES
+# ============================================================
+
+# This is the username you'll use to log in (never use "root" directly)
+NEW_USER="deploy"
+
+# Custom SSH port - changing from default 22 stops 99% of automated attacks
+# Choose any number between 1024 and 65535
+SSH_PORT=2222
+
+# YOUR public SSH key - this is REQUIRED for secure key-based login
+# Generate one on your local machine: ssh-keygen -t rsa -b 4096
+# Find your public key: cat ~/.ssh/id_rsa.pub
+# Copy the ENTIRE line starting with "ssh-rsa" here
+SSH_PUBLIC_KEY="ssh-rsa AAAAB3... your@email.com"
+
+# What software to install? true = install, false = skip
+# Docker lets you run containers (recommended for modern apps)
+INSTALL_DOCKER=true
+# Nginx is a web server / reverse proxy
+INSTALL_NGINX=true
+# Node.js if you're running JavaScript/TypeScript backend
+INSTALL_NODEJS=true
+# PostgreSQL if you need a relational database
+INSTALL_POSTGRES=false
+# Redis if you need caching or real-time messaging
+INSTALL_REDIS=false
+# ============================================================
+
+# STEP 1: Update all existing packages
+# apt update: refreshes the package list
+# apt upgrade -y: installs all available updates (-y = answer yes)
+echo "Updating system packages..."
+apt update && apt upgrade -y
+
+# STEP 2: Install essential tools every server needs
+# curl: transfer data from URLs
+# wget: download files
+# git: version control
+# ufw: uncomplicated firewall
+# fail2ban: blocks brute-force attacks
+# unattended-upgrades: automatic security patches
+# htop: interactive process viewer
+apt install -y curl wget git ufw fail2ban unattended-upgrades htop
+
+# STEP 3: Create your personal user account
+# NEVER use root for daily work - it's a security risk
+# useradd: creates the user
+# -m: creates a home directory (/home/deploy)
+# -s /bin/bash: sets the default shell to bash
+echo "Creating user: $NEW_USER..."
+useradd -m -s /bin/bash "$NEW_USER"
+
+# Add the user to the "sudo" group so they can run admin commands
+usermod -aG sudo "$NEW_USER"
+
+# STEP 4: Set up SSH key for password-less login
+# This is the most important security step
+# Without a key, you can't log in after we disable passwords
+echo "Installing SSH key for $NEW_USER..."
+mkdir -p /home/$NEW_USER/.ssh                              # Create .ssh folder
+echo "$SSH_PUBLIC_KEY" > /home/$NEW_USER/.ssh/authorized_keys  # Save your key
+chmod 700 /home/$NEW_USER/.ssh                            # Owner only can access folder
+chmod 600 /home/$NEW_USER/.ssh/authorized_keys            # Owner only can read key
+chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.ssh         # Set correct owner
+
+# STEP 5: Harden SSH configuration
+# These changes block the most common attack vectors
+echo "Hardening SSH..."
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak          # Backup original config
+
+# Change SSH port from 22 to your custom port
+sed -i "s/#Port 22/Port $SSH_PORT/" /etc/ssh/sshd_config
+
+# Disable root login - nobody can SSH directly as root
+sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+
+# Disable password authentication - only SSH keys work
+# This makes brute-force attacks impossible
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# Only allow YOUR user to SSH in
+echo "AllowUsers $NEW_USER" >> /etc/ssh/sshd_config
+
+# Apply the changes
+systemctl restart sshd
+
+# STEP 6: Configure firewall (UFW)
+# Default: block everything coming in, allow everything going out
+echo "Configuring firewall..."
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow $SSH_PORT/tcp        # Allow your custom SSH port
+ufw allow 80/tcp               # HTTP (web traffic)
+ufw allow 443/tcp              # HTTPS (secure web traffic)
+ufw --force enable             # Turn on firewall without asking
+
+# STEP 7: Set up fail2ban (brute force protection)
+# After 3 failed SSH attempts, bans the IP for 1 hour
+echo "Configuring fail2ban..."
+cat > /etc/fail2ban/jail.local <<EOF
+[DEFAULT]
+bantime = 3600                # Ban duration in seconds (1 hour)
+maxretry = 3                  # Number of failures before ban
+[sshd]
+enabled = true
+port = $SSH_PORT              # Watch your custom SSH port
+EOF
+systemctl enable fail2ban
+systemctl restart fail2ban
+
+# STEP 8: Enable automatic security updates
+# Critical security patches install without you doing anything
+echo "Enabling automatic updates..."
+apt install -y unattended-upgrades
+dpkg-reconfigure -plow unattended-upgrades
+
+# STEP 9: Create swap file (virtual memory)
+# Prevents crashes when RAM is full
+# 2G = 2 gigabytes of swap space
+echo "Creating swap file..."
+fallocate -l 2G /swapfile     # Create the file
+chmod 600 /swapfile           # Restrict permissions
+mkswap /swapfile              # Format as swap
+swapon /swapfile              # Enable swap
+echo '/swapfile none swap sw 0 0' >> /etc/fstab  # Mount at boot
+
+# STEP 10: Install optional software
+# Docker: containers for running applications
+[ "$INSTALL_DOCKER" = true ] && curl -fsSL https://get.docker.com | sh && usermod -aG docker "$NEW_USER"
+
+# Nginx: web server and reverse proxy
+[ "$INSTALL_NGINX" = true ] && apt install -y nginx
+
+# PostgreSQL: relational database
+[ "$INSTALL_POSTGRES" = true ] && apt install -y postgresql
+
+# Node.js: JavaScript runtime (version 20.x)
+[ "$INSTALL_NODEJS" = true ] && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs && npm install -g pm2
+
+# Redis: in-memory cache / message broker
+[ "$INSTALL_REDIS" = true ] && apt install -y redis-server
+
+echo "============================================"
+echo "SETUP COMPLETE!"
+echo "Test your new login: ssh -p $SSH_PORT $NEW_USER@YOUR_IP"
+echo "============================================"
+---END SCRIPT---
+
+# ============================================================
+# SECTION 2: 19 ESSENTIAL BASH COMMANDS
+# ============================================================
+# These are the ONLY commands you need to operate your VPS.
+# You don't need to learn hundreds of commands - just these 19.
+#
+# HOW TO LEARN:
+# Read through them once. Then keep this as a reference.
+# After a week of using your VPS, you'll know them by heart.
+
+# --------------------------------------------------
+# NAVIGATION (4 commands)
+# --------------------------------------------------
+# These commands let you move around the file system
+# and see what's there.
+
+pwd                          # "Print Working Directory" - shows your current location
+                             # Example output: /home/deploy
+                             # Use when: you forget where you are
+
+ls -la                       # "List" - shows all files in current directory
+                             # -l: long format (permissions, size, date)
+                             # -a: all files (including hidden ones starting with .)
+                             # Use when: you want to see what files are here
+
+cd /path/to/folder           # "Change Directory" - move to a different folder
+                             # Use absolute paths: cd /var/log
+                             # Use when: you need to go somewhere else
+
+cd ..                        # Go up one level (back to parent folder)
+                             # cd ../.. goes up two levels
+                             # Use when: you need to go back
+
+# --------------------------------------------------
+# FILE OPERATIONS (4 commands)
+# --------------------------------------------------
+# These commands let you view and edit files.
+
+nano file.txt                # Open a file in the nano text editor
+                             # nano is the simplest terminal editor
+                             # Controls: Ctrl+X to exit, Y to save, Enter to confirm
+                             # Use when: you need to edit a config file
+
+cat file.txt                 # "Concatenate" - print file contents to screen
+                             # Quick way to see what's in a file
+                             # Use when: you need a quick look at a short file
+
+cp source.txt dest.txt       # "Copy" - duplicate a file
+                             # First argument: existing file
+                             # Second argument: new file
+                             # Use when: you need a backup before editing
+
+rm file.txt                  # "Remove" - delete a file
+                             # WARNING: Linux has no recycle bin!
+                             # Use when: you're sure you don't need the file
+
+# --------------------------------------------------
+# DIRECTORIES (2 commands)
+# --------------------------------------------------
+# Creating and removing folders.
+
+mkdir myfolder               # "Make Directory" - create a new folder
+                             # Use when: you need a new place to put files
+
+rm -rf myfolder              # Remove a folder and EVERYTHING inside it
+                             # -r: recursive (delete contents too)
+                             # -f: force (don't ask for confirmation)
+                             # ⚠️ EXTREMELY DANGEROUS - double-check before using!
+                             # Use when: you're absolutely sure you want it gone
+
+# --------------------------------------------------
+# SYSTEM CONTROL (4 commands)
+# --------------------------------------------------
+# These commands manage services and give you admin powers.
+
+sudo command                 # "Super User DO" - run a command as root (admin)
+                             # Required for most system-level changes
+                             # Use when: you get "Permission denied"
+
+systemctl status nginx       # Check if a service is running
+                             # Shows: active (running) or inactive (stopped)
+                             # Use when: website is down, check if service is alive
+
+systemctl restart nginx      # Stop and start a service
+                             # Common services: nginx, docker, postgresql, redis
+                             # Use when: you changed a config file
+
+systemctl start nginx        # Start a stopped service
+                             # Use when: service is inactive and needs to run
+
+# --------------------------------------------------
+# PACKAGE MANAGEMENT (2 commands)
+# --------------------------------------------------
+# Installing and updating software.
+
+sudo apt update && sudo apt upgrade -y
+                             # Update the package list AND install all updates
+                             # && means "run second command only if first succeeds"
+                             # -y means "answer yes to all prompts"
+                             # Use when: at least once a week for security
+
+sudo apt install curl        # Install a new package
+                             # Replace "curl" with whatever you need
+                             # Use when: "command not found" - you need new software
+
+# --------------------------------------------------
+# MONITORING (3 commands)
+# --------------------------------------------------
+# Check how your server is performing.
+
+df -h                        # "Disk Free" - show disk space usage
+                             # -h: human-readable (GB, MB instead of bytes)
+                             # Use when: checking if disk is full
+
+free -h                      # Show RAM (memory) usage
+                             # Use when: server is slow, check if RAM is full
+
+htop                         # Interactive process viewer
+                             # Shows CPU usage, RAM, running processes
+                             # Press 'q' to quit
+                             # Use when: you need to see what's eating resources
+
+# --------------------------------------------------
+# NETWORKING (2 commands)
+# --------------------------------------------------
+# Check network connectivity and firewall.
+
+ss -tlnp                     # Show which ports are listening (open)
+                             # -t: TCP, -l: listening, -n: numeric, -p: process
+                             # Use when: app can't connect, check if port is open
+
+ufw status                   # Show firewall rules
+                             # Use when: "connection refused" - check if port is blocked
+
+# --------------------------------------------------
+# DEBUG SEQUENCE (when something breaks)
+# --------------------------------------------------
+# Run these commands IN ORDER when your app is down.
+# They'll find 90% of problems.
+
+systemctl status nginx                            # 1. Is the service running?
+journalctl -u nginx -n 50 --no-pager              # 2. Check recent logs for errors
+ss -tlnp | grep :80                               # 3. Is the correct port open?
+df -h                                              # 4. Is the disk full?
+free -h                                            # 5. Is RAM exhausted?
+
+# ============================================================
+# SECTION 3: GIT COMMANDS
+# ============================================================
+# Git lets you version control your code and deploy updates.
+#
+# WORKFLOW:
+# 1. Write code on your local computer
+# 2. Commit and push to GitHub
+# 3. SSH into VPS and pull the changes
+# 4. Restart your app
+
+# --------------------------------------------------
+# ON YOUR LOCAL MACHINE (every time you finish coding)
+# --------------------------------------------------
+# These commands save your work and upload it to GitHub.
+
+git status                   # See which files you changed
+                             # Red = not staged, Green = staged for commit
+                             # Use when: you want to see what you've done
+
+git add .                    # Stage ALL changed files for commit
+                             # The "." means "everything in this folder"
+                             # Use when: you're ready to save all changes
+
+git commit -m "Fix login bug"  # Save a snapshot with a descriptive message
+                             # Write messages that explain WHY, not just WHAT
+                             # Good: "Fix password validation for special characters"
+                             # Bad: "Update file.js"
+
+git push origin main         # Upload your commits to GitHub
+                             # "origin" = GitHub, "main" = the branch name
+                             # Use when: you want to deploy these changes
+
+# --------------------------------------------------
+# ON YOUR VPS (first time - clone your project)
+# --------------------------------------------------
+# Do this once when setting up a new project on the server.
+
+git clone https://github.com/your-username/your-repo.git
+                             # Downloads your entire project from GitHub
+                             # Creates a folder with your repo name
+                             # Use when: setting up a project for the first time
+
+cd your-repo                 # Enter the project folder you just downloaded
+                             # Use when: you need to run commands inside your project
+
+# --------------------------------------------------
+# ON YOUR VPS (every time you deploy updates)
+# --------------------------------------------------
+# Do this whenever you want to update the live server with your latest code.
+
+cd ~/your-project            # Go to your project folder
+                             # Use when: you need to be in the right place
+
+git pull origin main         # Download the latest code from GitHub
+                             # This fetches and merges in one step
+                             # Use when: you've pushed new code and want to deploy
+
+# After pulling, restart your app so it uses the new code:
+docker compose up -d --build       # If using Docker
+pm2 restart app                    # If using PM2 (Node.js)
+systemctl restart myapp            # If using systemd service
+
+# ============================================================
+# SECTION 4: REDIS COMMANDS
+# ============================================================
+# Redis is an in-memory database used for:
+# - Caching (store data for fast access)
+# - Session management (keep users logged in)
+# - Real-time messaging (Pub/Sub for chat, notifications)
+# - Rate limiting (prevent abuse)
+
+# --------------------------------------------------
+# CONNECTING TO REDIS
+# --------------------------------------------------
+# Different ways to access Redis depending on your setup.
+
+redis-cli                    # Connect to Redis running directly on the server
+                             # Use when: Redis is installed normally (apt install redis)
+
+docker exec -it redis redis-cli
+                             # Connect to Redis running in a Docker container
+                             # "redis" is the container name
+                             # Use when: Redis is in Docker
+
+redis-cli -a yourpassword    # Connect with password authentication
+                             # -a: authentication
+                             # Use when: you've set a Redis password (recommended)
+
+# --------------------------------------------------
+# BASIC KEY/VALUE OPERATIONS
+# --------------------------------------------------
+# Redis stores data as key-value pairs.
+# Think of it like a giant dictionary/hash map.
+
+PING                         # Check if Redis is alive
+                             # Should return: PONG
+                             # Use when: troubleshooting connection issues
+
+SET user:1 "John"            # Store a value
+                             # Format: SET key value
+                             # Keys are strings, values can be strings, numbers, JSON
+                             # Use when: you want to cache something
+
+GET user:1                   # Retrieve a value
+                             # Returns the stored value, or (nil) if not found
+                             # Use when: you need to check what's stored
+
+DEL user:1                   # Delete a key
+                             # Returns the number of keys deleted (1 or 0)
+                             # Use when: you want to remove cached data
+
+EXISTS user:1                # Check if a key exists
+                             # Returns 1 if exists, 0 if not
+                             # Use when: debugging
+
+EXPIRE session:abc 3600      # Set expiration time in seconds
+                             # 3600 = 1 hour, 86400 = 1 day
+                             # After this time, the key is automatically deleted
+                             # Use when: you want temporary data (sessions, tokens)
+
+TTL session:abc              # "Time To Live" - check remaining time
+                             # Returns seconds until expiration
+                             # -1 means no expiration, -2 means key doesn't exist
+                             # Use when: checking if a key is about to expire
+
+KEYS user:*                  # Find all keys matching a pattern
+                             # * is a wildcard (matches anything)
+                             # ⚠️ Slow on large databases - don't use in production code!
+                             # Use when: debugging, finding related keys
+
+# --------------------------------------------------
+# PUB/SUB (REAL-TIME MESSAGING)
+# --------------------------------------------------
+# Pub/Sub allows instant communication between services.
+# One publisher sends a message, many subscribers receive it.
+# Think of it like a radio: station broadcasts, listeners tune in.
+
+PUBLISH notifications "Hello!"
+                             # Send a message to a channel
+                             # Anyone subscribed to "notifications" receives it
+                             # Returns number of subscribers that received the message
+                             # Use when: broadcasting events (user logged in, order placed)
+
+SUBSCRIBE notifications      # Listen to a channel
+                             # ⚠️ This blocks the terminal - messages appear in real-time
+                             # Press Ctrl+C to stop listening
+                             # Use when: testing/debugging Pub/Sub
+
+PSUBSCRIBE user:*            # Listen to ALL channels matching a pattern
+                             # user:* matches user:created, user:updated, etc.
+                             # Use when: you want to see all related events
+
+# --------------------------------------------------
+# ADMIN COMMANDS
+# --------------------------------------------------
+# Commands for monitoring and managing Redis itself.
+
+INFO                         # Show server statistics
+                             # Memory usage, connected clients, uptime, etc.
+                             # Use when: checking Redis health
+
+DBSIZE                       # Count total keys in the current database
+                             # Use when: checking database size
+
+MONITOR                      # Show ALL commands in real-time
+                             # ⚠️ Performance impact - don't run in production!
+                             # Use when: debugging what's happening right now
+
+FLUSHALL                     # Delete EVERYTHING from Redis
+                             # ⚠️⚠️⚠️ IRREVERSIBLE - all data is lost forever
+                             # Use when: you're 100% sure you want to start fresh
+
+# ============================================================
+# SECTION 5: DOCKER COMMANDS
+# ============================================================
+# Docker runs applications in isolated containers.
+# Each container is like a lightweight virtual machine.
+#
+# KEY CONCEPTS:
+# Image: A template for creating containers (like a class)
+# Container: A running instance of an image (like an object)
+# Compose: Tool for running multiple containers together
+
+docker ps                    # List all RUNNING containers
+                             # Shows: container ID, name, status, ports
+                             # Use when: you want to see what's running
+
+docker ps -a                 # List ALL containers (including stopped ones)
+                             # Use when: debugging why a container isn't running
+
+docker compose up -d         # Start your entire stack in the background
+                             # -d: detached mode (runs in background)
+                             # Reads docker-compose.yml in current directory
+                             # Use when: deploying or restarting everything
+
+docker compose down          # Stop and remove all containers in your stack
+                             # Data in volumes is preserved (databases, uploads)
+                             # Use when: you need to stop everything
+
+docker compose logs -f       # View logs from all containers in real-time
+                             # -f: follow (keep showing new logs as they appear)
+                             # Ctrl+C to stop viewing
+                             # Use when: debugging, monitoring
+
+docker compose logs -f app   # View logs for a specific service only
+                             # Replace "app" with your service name
+                             # Use when: you only care about one service
+
+docker compose restart app   # Restart a specific service
+                             # Use when: you changed config for one service
+
+docker compose exec app sh   # Open a shell INSIDE a running container
+                             # "app" is the service name, "sh" is the shell
+                             # Use "bash" instead of "sh" if available
+                             # Use when: you need to run commands inside a container
+
+docker system prune -a       # Clean up unused images, containers, networks
+                             # Frees disk space
+                             # -a: also remove unused images (not just dangling)
+                             # Use when: disk is getting full
+
+docker stats                 # Show CPU, RAM, network for all containers
+                             # Real-time updates, Ctrl+C to stop
+                             # Use when: checking which container uses most resources
+
+# ============================================================
+# SECTION 6: QUICK RECOVERY GUIDE
+# ============================================================
+# When your server or app is down, follow these steps IN ORDER.
+# Don't panic - just work through each one.
+
+# PROBLEM 1: Can't connect to server at all
+ssh -p 2222 deploy@YOUR_IP
+# If this fails:
+#   - Check if VPS is running (Contabo control panel)
+#   - Check if your IP changed (curl ifconfig.me from local)
+#   - Check if firewall blocked you (too many failed attempts = fail2ban ban)
+
+# PROBLEM 2: Server is slow or unresponsive
+df -h                        # Check disk space
+                             # If any line shows 100%, you need to free space
+                             # Solution: docker system prune -a (if using Docker)
+                             # Or: rm old log files in /var/log
+
+free -h                      # Check RAM usage
+                             # If "available" is near 0, a process is leaking memory
+                             # Solution: restart the biggest service
+                             # Or: docker stats to find the hungry container
+
+htop                         # Check CPU usage
+                             # If CPU is at 100%, find the process and investigate
+                             # Solution: restart the problematic service
+
+# PROBLEM 3: Website/app is down
+systemctl status nginx       # Is the web server running?
+                             # If "inactive (dead)": systemctl start nginx
+
+systemctl status docker      # Is Docker running?
+                             # If not: systemctl start docker
+
+docker ps                    # Are your containers running?
+                             # If containers are missing: docker compose up -d
+
+journalctl -u nginx -n 50 --no-pager
+                             # Check the last 50 log lines for errors
+                             # Look for words like "error", "failed", "denied"
+
+# PROBLEM 4: Can't pull from GitHub
+git pull origin main
+# If error "Could not resolve host":
+#   - Check internet: ping github.com
+#   - If ping fails: DNS issue
+#   - Check DNS: cat /etc/resolv.conf
+#   - Should show: nameserver 8.8.8.8 or similar
+
+# PROBLEM 5: Database connection issues
+# PostgreSQL:
+systemctl status postgresql
+pg_isready
+
+# Redis:
+redis-cli PING
+# Should return: PONG
+
+# Docker services:
+docker compose ps
+# Check if database container is "Up" or "Exited"
+
+# ============================================================
+# YOU ARE NOW READY TO OPERATE A PRODUCTION VPS
+# ============================================================
+# Keep this file handy - print it, save it, bookmark it.
+# Every command you need is right here.
+#
+# Remember:
+# - Run system updates weekly: sudo apt update && sudo apt upgrade -y
+# - Monitor disk space: df -h
+# - Check logs when something breaks: journalctl or docker compose logs
+# - Always test SSH before closing your current session
+# - Back up your data regularly
+#
+# Good luck! 🚀

@@ -20,7 +20,7 @@ FIRST_DAY_BOOST_LIMIT = 10
 FIRST_DAY_BOOST_DURATION = timedelta(hours=24)
 
 # Free storage vault allowance (applies to every user, paid or not).
-FREE_STORAGE_BYTES = 10 * MB
+FREE_STORAGE_BYTES = 25 * MB
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ PLANS: dict[str, Plan] = {
         price_kobo=30000,  # ₦300
         duration_days=2,
         query_quota=100,
-        storage_bytes=25 * MB,
+        storage_bytes=50 * MB,
         tagline="The impulse buy — cheaper than a bottle of Coke.",
     ),
     "semester": Plan(
@@ -64,7 +64,7 @@ PLANS: dict[str, Plan] = {
         price_kobo=350000,  # ₦3,500
         duration_days=120,
         query_quota=2000,
-        storage_bytes=150 * MB,
+        storage_bytes=250 * MB,
         tagline="Anchored to the price of a standard departmental handout.",
         featured=True,
     ),
@@ -74,7 +74,7 @@ PLANS: dict[str, Plan] = {
         price_kobo=600000,  # ₦6,000
         duration_days=270,
         query_quota=4500,
-        storage_bytes=350 * MB,
+        storage_bytes=500 * MB,
         tagline="Save ₦1,000 vs two Semester Pro passes.",
     ),
     "topup": Plan(

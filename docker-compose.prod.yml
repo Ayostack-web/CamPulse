@@ -22,8 +22,6 @@ services:
     env_file:
       - .env.production
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      DIRECT_URL: ${DIRECT_URL}
       REDIS_URL: redis://redis:6379/0
     depends_on:
       redis:
@@ -40,8 +38,6 @@ services:
     env_file:
       - .env.production
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      DIRECT_URL: ${DIRECT_URL}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     depends_on:
@@ -60,8 +56,6 @@ services:
     env_file:
       - .env.production
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      DIRECT_URL: ${DIRECT_URL}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     depends_on:

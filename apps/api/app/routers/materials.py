@@ -1,12 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import socket
 import uuid
-from contextlib import suppress
 from datetime import datetime, timezone
-from pathlib import Path
-from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
 
 import anyio
@@ -61,35 +59,14 @@ def _compress_pdf_bytes(data: bytes, filename: str) -> bytes:
     Large PDFs are skipped so a heavy Ghostscript run cannot stall the request
     or crash the (free-tier, low-memory) instance.
     """
-    from app.services.pdf_compressor import compress_pdf_ghostscript
+    from app.services.pdf_compressor import compress_pdf_bytes
 
-    if not filename.lower().endswith(".pdf") or len(data) == 0:
-        return data
-    if len(data) > MAX_COMPRESS_BYTES:
-        logger.info("Skipping PDF compression for %s (%d bytes)", filename, len(data))
-        return data
-
-    source_path: Path | None = None
-    target_path: Path | None = None
-    try:
-        with NamedTemporaryFile(delete=False, suffix=".pdf") as source_file:
-            source_file.write(data)
-            source_path = Path(source_file.name)
-
-        target_path = source_path.with_name(f"{source_path.stem}_compressed.pdf")
-        compressed = compress_pdf_ghostscript(source_path, target_path, timeout=COMPRESS_TIMEOUT_SECONDS)
-        if compressed is not None and compressed.stat().st_size < len(data):
-            return compressed.read_bytes()
-        return data
-    except Exception:
-        logger.warning("PDF compression failed for %s; storing original.", filename, exc_info=True)
-        return data
-    finally:
-        with suppress(OSError):
-            if source_path is not None:
-                source_path.unlink(missing_ok=True)
-            if target_path is not None:
-                target_path.unlink(missing_ok=True)
+    return compress_pdf_bytes(
+        data,
+        filename,
+        max_bytes=MAX_COMPRESS_BYTES,
+        timeout=COMPRESS_TIMEOUT_SECONDS,
+    )
 
 
 class TopicRef(BaseModel):
@@ -264,19 +241,35 @@ async def upload_material(
 
     material_id = str(uuid.uuid4())
     ext = file.filename.split(".")[-1] if file.filename else "pdf"
-    storage_path = f"materials/{material_id}.{ext}"
+
+    # Content-address dedup: files whose compressed bytes already exist in the
+    # vault reuse the stored blob instead of uploading a duplicate. The new
+    # material still owns its own entry and its own quota share.
+    content_hash = hashlib.sha256(data).hexdigest()
+    existing = (
+        await db.execute(
+            select(Material)
+            .where(Material.content_hash == content_hash)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
     storage = get_storage()
-    try:
-        url = await storage.upload(
-            settings.supabase_storage_bucket, storage_path, data, file.content_type
-        )
-    except Exception as exc:
-        logger.warning("Storage upload failed for %s: %s", file.filename, exc)
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not save file to storage ({type(exc).__name__}: {exc}). Please try again.",
-        ) from exc
+    if existing and existing.file_path:
+        url = existing.file_url
+        storage_path = existing.file_path
+    else:
+        storage_path = f"materials/{material_id}.{ext}"
+        try:
+            url = await storage.upload(
+                settings.supabase_storage_bucket, storage_path, data, file.content_type
+            )
+        except Exception as exc:
+            logger.warning("Storage upload failed for %s: %s", file.filename, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not save file to storage ({type(exc).__name__}: {exc}). Please try again.",
+            ) from exc
 
     material = Material(
         id=material_id,
@@ -290,6 +283,7 @@ async def upload_material(
         is_past_question=is_past_question == "true",
         exam_year=int(exam_year) if exam_year and exam_year.isdigit() else None,
         semester=semester if semester in ("FIRST", "SECOND") else None,
+        content_hash=content_hash,
     )
     db.add(material)
     await db.flush()
@@ -335,7 +329,20 @@ async def delete_material(
 
     storage = get_storage()
     if material.file_path:
-        await storage.delete(settings.supabase_storage_bucket, material.file_path)
+        # A deduplicated blob may be referenced by other materials; only delete
+        # it when this is the last reference.
+        other_refs = 0
+        if material.content_hash:
+            other_refs = await db.scalar(
+                select(func.count())
+                .select_from(Material)
+                .where(
+                    Material.content_hash == material.content_hash,
+                    Material.id != material.id,
+                )
+            ) or 0
+        if other_refs == 0:
+            await storage.delete(settings.supabase_storage_bucket, material.file_path)
 
     await anyio.to_thread.run_sync(_vector_store.delete_document, material_id)
 

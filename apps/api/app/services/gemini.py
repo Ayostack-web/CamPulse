@@ -12,20 +12,22 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash"
+API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest"
 
 #: Model used by the urllib-backed call path below.
-MODEL_NAME = "gemini-2.0-flash"
+MODEL_NAME = "gemini-flash-lite-latest"
 
 #: Approximate USD cost per 1M tokens by model (input, output). These are
 #: estimates used ONLY for usage/cost logging — verify them against the
-#: provider billing dashboard and update as pricing changes.
+#: provider billing dashboard and update as pricing changes. Current as of
+#: Aug 2026 (Gemini 3.x production tier; 2.0/2.5 flash are deprecated).
 MODEL_PRICES: dict[str, dict[str, float]] = {
-    "gemini-2.0-flash": {"input": 0.075, "output": 0.30},
-    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
-    "gemini-2.5-pro-preview": {"input": 1.25, "output": 10.00},
+    "gemini-flash-lite-latest": {"input": 0.15, "output": 0.60},
+    "gemini-3.6-flash": {"input": 1.50, "output": 7.50},
+    "gemini-3-flash": {"input": 0.50, "output": 3.00},
+    "gemini-pro-latest": {"input": 2.00, "output": 12.00},
 }
-DEFAULT_PRICE: dict[str, float] = {"input": 0.10, "output": 0.40}
+DEFAULT_PRICE: dict[str, float] = {"input": 0.15, "output": 0.60}
 
 
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -95,7 +97,7 @@ def _call(
     user_id: str | None = None,
     usage: list | None = None,
 ) -> str | None:
-    """Call Gemini 2.0 Flash and return the generated text.
+    """Call Gemini Flash-Lite and return the generated text.
 
     When ``usage`` is provided (a list), it receives a
     ``(prompt_tokens, completion_tokens)`` tuple so callers can track cost.
@@ -129,7 +131,7 @@ def _call(
             logger.error("Gemini API returned HTTP %s (%s): %s", e.code, e.reason, error_body)
             if e.code in (400, 401, 403):
                 raise GeminiError(
-                    "Gemini API rejected the request. Check that the API key is valid and has access to the gemini-2.0-flash model.",
+                    "Gemini API rejected the request. Check that the API key is valid and has access to the gemini-flash-lite-latest model.",
                     status_code=e.code,
                 )
             if e.code not in RETRYABLE_STATUS:
@@ -150,10 +152,10 @@ def _call(
             raise GeminiError("Gemini API returned an invalid response")
 
     try:
-        usage = result.get("usageMetadata") or {}
-        prompt_tokens = usage.get("promptTokenCount") or 0
-        completion_tokens = usage.get("candidatesTokenCount") or 0
-        total_tokens = usage.get("totalTokenCount") or (prompt_tokens + completion_tokens)
+        meta = result.get("usageMetadata") or {}
+        prompt_tokens = meta.get("promptTokenCount") or 0
+        completion_tokens = meta.get("candidatesTokenCount") or 0
+        total_tokens = meta.get("totalTokenCount") or (prompt_tokens + completion_tokens)
         if usage is not None:
             usage.append((prompt_tokens, completion_tokens))
         cost = estimate_cost(MODEL_NAME, prompt_tokens, completion_tokens)
@@ -249,7 +251,7 @@ def call(
     user_id: str | None = None,
     usage: list | None = None,
 ) -> str | None:
-    """Public wrapper around the 2.0 Flash call for feature services.
+    """Public wrapper around the Flash-Lite call for feature services.
 
     ``usage`` is an optional list that receives a ``(prompt_tokens,
     completion_tokens)`` tuple so callers can track per-call cost.

@@ -67,7 +67,7 @@ def _insert_question(
         INSERT INTO solved_questions
             (id, batch_id, course_id, material_id, question_hash, question_text,
              year, semester, status, model, cost_usd, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'QUEUED', 'gemini-2.0-flash', 0.0, NOW(), NOW())
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'QUEUED', 'gemini-flash-lite-latest', 0.0, NOW(), NOW())
         ON CONFLICT (question_hash) DO NOTHING
         RETURNING id
     """

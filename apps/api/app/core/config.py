@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=64)
     embedding_cache_ttl_seconds: int = Field(default=604800)
 
+    # Exact-match response cache for the academic agent (whole-class dedup).
+    prompt_cache_ttl_seconds: int = Field(default=604800)
+
     # Maintenance
     maintenance_api_key: str = Field(default="")
 

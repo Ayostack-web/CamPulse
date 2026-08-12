@@ -6,7 +6,7 @@ solved questions (the high-margin paid product):
 1. ``extract_questions`` pulls individual questions out of an exam paper.
 2. ``solve_question`` produces a structured answer (answer/explanation/mistake).
 
-Both run on Gemini 2.0 Flash via ``app.services.gemini.call``. Because the
+Both run on Gemini Flash-Lite via ``app.services.gemini.call``. Because the
 output is stored in the DB and served as content, the marginal cost of serving
 an answer to an unlimited number of students is ~₦0.
 """
@@ -23,7 +23,7 @@ from app.services.gemini import estimate_cost
 
 logger = logging.getLogger(__name__)
 
-SOLVE_MODEL = "gemini-2.0-flash"
+SOLVE_MODEL = "gemini-flash-lite-latest"
 MAX_EXTRACT_CHARS = 30000
 
 
