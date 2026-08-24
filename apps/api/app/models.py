@@ -1,7 +1,8 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+import sqlalchemy as sa
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -80,6 +81,9 @@ class University(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(__import__("uuid").uuid4()))
     code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    program_type: Mapped[str] = mapped_column(
+        String, nullable=False, default="university", server_default="university"
+    )
 
     colleges: Mapped[list["College"]] = relationship(back_populates="university", cascade="all, delete-orphan")
     users: Mapped[list["User"]] = relationship(back_populates="university")
@@ -105,10 +109,13 @@ class Course(Base):
     __tablename__ = "courses"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(__import__("uuid").uuid4()))
-    code: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    code: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     level: Mapped[int] = mapped_column(Integer, nullable=False)
     department_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("departments.id", ondelete="SET NULL"))
+    university_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("universities.id", ondelete="CASCADE")
+    )
     is_general: Mapped[bool] = mapped_column(Boolean, default=False)
 
     department: Mapped["Department | None"] = relationship(back_populates="courses")
@@ -117,8 +124,23 @@ class Course(Base):
     solved_questions: Mapped[list["SolvedQuestion"]] = relationship(back_populates="course", cascade="all, delete-orphan")
 
     __table_args__ = (
+        Index(
+            "uq_courses_department_code",
+            "department_id",
+            "code",
+            unique=True,
+            postgresql_where=sa.text("department_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_courses_university_code",
+            "university_id",
+            "code",
+            unique=True,
+            postgresql_where=sa.text("department_id IS NULL AND university_id IS NOT NULL"),
+        ),
         Index("ix_courses_department_id_is_general", "department_id", "is_general"),
         Index("ix_courses_department_id", "department_id"),
+        Index("ix_courses_university_id", "university_id"),
     )
 
 
@@ -337,6 +359,7 @@ class Material(Base):
     exam_year: Mapped[int | None] = mapped_column(Integer)
     semester: Mapped[str | None] = mapped_column(String)
     content_hash: Mapped[str | None] = mapped_column(String(64))
+    last_opened_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
 
     topic: Mapped["Topic"] = relationship(back_populates="materials")
     uploader: Mapped["User"] = relationship(back_populates="materials")
@@ -350,6 +373,7 @@ class Material(Base):
         Index("ix_materials_topic_id_is_seed", "topic_id", "is_seed"),
         Index("ix_materials_is_seed", "is_seed"),
         Index("ix_materials_content_hash", "content_hash"),
+        Index("ix_materials_last_opened_at", "last_opened_at"),
     )
 
 
@@ -416,6 +440,7 @@ class ConversationMember(Base):
         default=ConversationRole.MEMBER,
     )
     last_read_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
+    unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=sa.text("0"))
     joined_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
 
     conversation: Mapped["Conversation"] = relationship(back_populates="members")
@@ -469,6 +494,7 @@ class MessageReadReceipt(Base):
         Index("ix_message_read_receipts_user_id", "user_id"),
         Index("ix_message_read_receipts_message_id", "message_id"),
         Index("ix_message_read_receipts_read_at", "read_at"),
+        UniqueConstraint("message_id", "user_id", name="uq_message_read_receipts_message_user"),
     )
 
 
@@ -482,6 +508,7 @@ class Notification(Base):
     message: Mapped[str | None] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSON)
     source_message_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("messages.id", ondelete="SET NULL"))
+    conversation_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("conversations.id", ondelete="CASCADE"))
     delivered_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
     read_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
@@ -495,6 +522,13 @@ class Notification(Base):
         Index("ix_notifications_read_at", "read_at"),
         Index("ix_notifications_created_at", "created_at"),
         Index("ix_notifications_user_id_read_at", "user_id", "read_at"),
+        Index("ix_notifications_conversation_id", "conversation_id"),
+        Index(
+            "uq_notifications_user_kind_conversation",
+            "user_id", "kind", "conversation_id",
+            unique=True,
+            postgresql_where=sa.text("conversation_id IS NOT NULL"),
+        ),
     )
 
 
@@ -905,4 +939,35 @@ class SolvedQuestion(Base):
         Index("ix_solved_questions_course_id", "course_id"),
         Index("ix_solved_questions_course_id_status", "course_id", "status"),
         Index("ix_solved_questions_course_id_is_sample", "course_id", "is_sample"),
+    )
+
+
+class AiUsage(Base):
+    """One row per AI model call, for per-user/plan cost attribution.
+
+    Written best-effort from the Gemini call sites; never blocks or fails a
+    request. ``user_plan`` is snapshotted at call time so historical rows stay
+    meaningful after upgrades/downgrades. ``dedup_hit`` marks answers served
+    from the prompt cache (near-zero marginal cost).
+    """
+
+    __tablename__ = "ai_usage"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(__import__("uuid").uuid4()))
+    user_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"))
+    user_plan: Mapped[str] = mapped_column(String(32), default="system")
+    feature: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(64))
+    task_tier: Mapped[str | None] = mapped_column(String(16))
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    dedup_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    est_cost_usd: Mapped[float] = mapped_column(default=0.0)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_ai_usage_user_created", "user_id", "created_at"),
+        Index("ix_ai_usage_feature_created", "feature", "created_at"),
+        Index("ix_ai_usage_created_at", "created_at"),
     )

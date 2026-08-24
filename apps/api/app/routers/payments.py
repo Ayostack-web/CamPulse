@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.database import get_db
-from app.deps import CurrentUser, get_current_user
+from app.deps import CurrentUser, check_payment_rate_limit, get_current_user
 from app.models import Subscription, User
 from app import plans
 from sqlalchemy import select
@@ -131,7 +131,7 @@ async def initialize_payment(
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_payment(
     reference: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(check_payment_rate_limit),
     db: AsyncSession = Depends(get_db),
 ):
     async with httpx.AsyncClient() as client:
@@ -169,9 +169,14 @@ async def verify_payment(
 
 
 def _is_valid_webhook_signature(payload: bytes, signature: str | None) -> bool:
-    """HMAC-SHA512 of the raw body signed with the Paystack secret key."""
+    """HMAC-SHA512 of the raw body signed with the Paystack secret key.
+
+    Fails closed: if the secret is not configured or the header is missing,
+    the webhook must be rejected — an unsigned endpoint would let anyone
+    forge charge.success events and grant themselves paid plans.
+    """
     if not settings.paystack_secret_key or not signature:
-        return True
+        return False
     expected = hmac.new(
         settings.paystack_secret_key.encode(), payload, hashlib.sha512
     ).hexdigest()

@@ -5,11 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
+import { openMaterialPdf, removeCachedPdf } from '@/lib/pdf-cache';
 import { useBackupEmailPrompt } from '@/hooks/useBackupEmailPrompt';
 import { BackupEmailModal } from '@/components/auth/BackupEmailModal';
 import { ProfileBackupBanner } from '@/components/profile/ProfileBackupBanner';
 import { ChatPanel } from '@/components/chat/ChatPanel';
-import { PdfViewer } from './PdfViewer';
 
 interface VaultMaterial {
   id: string;
@@ -76,31 +76,18 @@ export function PrivateVaultView() {
       if (id === null) return;
       queryClient.invalidateQueries({ queryKey: ['vault-materials'] });
       queryClient.invalidateQueries({ queryKey: ['past-questions'] });
+      void removeCachedPdf(id).catch(() => {});
     },
     onError: () => toast.error('Failed to delete material'),
   });
 
   const openFile = useCallback(async (id: string, title: string) => {
     try {
-      const supabase = getSupabaseBrowserClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`;
-      }
-      const url = `/api/materials/${id}/file`;
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error('Failed to get file');
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      setViewerUrl(blobUrl);
+      const url = await openMaterialPdf(id);
+      setViewerUrl(url);
       setViewerTitle(title);
     } catch { toast.error('Failed to open file'); }
   }, []);
-
-  const revokeViewerUrl = useCallback(() => {
-    if (viewerUrl?.startsWith('blob:')) URL.revokeObjectURL(viewerUrl);
-  }, [viewerUrl]);
 
   const totalSize = items.reduce((acc, i) => acc + (i.fileSize || 0), 0);
   const sizeMb = totalSize > 0 ? `${(totalSize / (1024 * 1024)).toFixed(1)} MB` : '0 MB';
@@ -208,7 +195,7 @@ export function PrivateVaultView() {
             <div className="flex items-center justify-between gap-2 bg-black/80 px-3 py-2 sm:px-4 sm:py-3">
               <p className="min-w-0 truncate text-xs font-semibold text-white sm:text-sm">{viewerTitle}</p>
               <button
-                onClick={() => { setViewerUrl(null); setViewerTitle(''); revokeViewerUrl(); }}
+                onClick={() => { setViewerUrl(null); setViewerTitle(''); }}
                 className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white hover:bg-white/20 transition-colors sm:px-4 sm:py-1.5 sm:text-sm"
               >
                 Close

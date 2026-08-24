@@ -3,7 +3,9 @@
 import { useState, useCallback, useEffect } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase-client'
 import { offlineStore } from '@/lib/offline-store'
+import { cacheMaterialPdf, openMaterialPdf, removeCachedPdf } from '@/lib/pdf-cache'
 import { fetchApi, parseApiError } from '@/lib/api-request'
+import { getAuthHeaders } from '@/lib/auth-fetch'
 
 import type { DocumentInfo } from './ThreePanelLayout'
 import { PdfViewerInline } from './PdfViewerInline'
@@ -33,6 +35,7 @@ interface Material {
   is_shared: boolean
   is_seed: boolean
   uploaded_at: string | null
+  last_opened_at?: string | null
 }
 
 interface MainContentPanelProps {
@@ -61,6 +64,16 @@ const SEED_MATERIALS: Material[] = [
   { id: 'seed-4', file_name: 'Organic Chemistry Notes.pdf', file_url: '/seed/organic-chemistry-notes.pdf', file_size: 9036, topic_id: '', uploader_id: '', uploader_name: 'Vylix Team', uploader_avatar: null, processing_status: 'COMPLETED', is_shared: true, is_seed: true, uploaded_at: null },
   { id: 'seed-5', file_name: 'Linear Algebra Basics.pdf', file_url: '/seed/linear-algebra-basics.pdf', file_size: 12884, topic_id: '', uploader_id: '', uploader_name: 'Vylix Team', uploader_avatar: null, processing_status: 'COMPLETED', is_shared: true, is_seed: true, uploaded_at: null },
 ]
+
+const openedThisSession = new Set<string>()
+
+function trackMaterialOpen(materialId: string): void {
+  if (openedThisSession.has(materialId)) return
+  openedThisSession.add(materialId)
+  getAuthHeaders()
+    .then((headers) => fetchApi(`/api/materials/${materialId}/open`, { method: 'POST', headers }))
+    .catch(() => {})
+}
 
 export function MainContentPanel({ selectedCourseId, selectedDoc, onSelectDoc, isReadOnly = false }: MainContentPanelProps) {
   const { connectDrive, driveConnected, driveError, clearError } = useDrive()
@@ -182,13 +195,21 @@ export function MainContentPanel({ selectedCourseId, selectedDoc, onSelectDoc, i
     setSaving(true)
     try {
       await offlineStore.cacheDocument(selectedDoc.id, { name: selectedDoc.name, courseId: selectedDoc.courseId, courseCode: selectedDoc.courseCode, savedAt: Date.now() })
+      try {
+        const doc = documents.find((d) => d.id === selectedDoc.id)
+        const directUrl = doc?.is_seed || selectedDoc.id.startsWith('seed-') ? doc?.file_url : undefined
+        await cacheMaterialPdf(selectedDoc.id, { directUrl })
+      } catch (error) {
+        console.error('[MainContentPanel] Failed to cache PDF bytes:', error)
+        setActionError('Saved details, but the file could not be downloaded for offline reading.')
+      }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (error) {
       console.error('[MainContentPanel] Failed to save offline:', error)
     }
     setSaving(false)
-  }, [selectedDoc])
+  }, [selectedDoc, documents])
 
   const handleViewPdf = useCallback(async (materialId: string) => {
     if (materialId.startsWith('seed-')) {
@@ -197,18 +218,12 @@ export function MainContentPanel({ selectedCourseId, selectedDoc, onSelectDoc, i
       return
     }
     try {
-      const supabase = getSupabaseBrowserClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const headers: Record<string, string> = {}
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`
-      }
-      const res = await fetch(`/api/materials/${materialId}/file`, { headers })
-      if (!res.ok) throw new Error('Failed to get file')
-      const { download_url } = await res.json()
-      setViewerUrl(download_url)
+      const url = await openMaterialPdf(materialId)
+      setViewerUrl(url)
+      trackMaterialOpen(materialId)
     } catch (error) {
       console.error('[MainContentPanel] Failed to load PDF:', error)
+      setActionError('Failed to load PDF. Check your connection or save it for offline first.')
     }
   }, [documents])
 
@@ -272,6 +287,7 @@ export function MainContentPanel({ selectedCourseId, selectedDoc, onSelectDoc, i
         return
       }
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id))
+      void removeCachedPdf(doc.id).catch(() => {})
     } catch (error) {
       console.error('[MainContentPanel] Failed to delete document:', error)
       setActionError('Failed to delete document.')

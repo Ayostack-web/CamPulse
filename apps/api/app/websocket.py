@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 
 class ConnectionManager:
@@ -12,7 +13,10 @@ class ConnectionManager:
         self.user_connections: dict[str, list[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, room: str, user_id: str | None = None):
-        await websocket.accept()
+        # A socket may join many rooms over its lifetime; only the first
+        # connect performs the accept handshake.
+        if websocket.application_state != WebSocketState.CONNECTED:
+            await websocket.accept()
         if room not in self.active_connections:
             self.active_connections[room] = []
         self.active_connections[room].append(websocket)

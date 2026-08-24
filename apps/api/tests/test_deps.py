@@ -72,22 +72,42 @@ def test_rate_limiter_sliding_window():
     assert limiter.is_rate_limited("k")
 
 
-def test_check_ai_rate_limit_anonymous_per_ip():
+@pytest.fixture
+def _memory_limiter_only(monkeypatch):
+    """Force the in-memory fallback so tests are deterministic with or without Redis."""
+    async def _no_redis(key, max_requests, window_seconds):
+        return None
+
+    monkeypatch.setattr("app.deps._redis_rate_limited", _no_redis)
+
+
+async def test_check_ai_rate_limit_anonymous_per_ip(_memory_limiter_only):
     request = _make_request(client_host="10.20.30.99")
     for _ in range(anonymous_ip_limiter.max_requests):
-        check_ai_rate_limit(request, user=None)
+        await check_ai_rate_limit(request, user=None)
     with pytest.raises(HTTPException) as exc_info:
-        check_ai_rate_limit(request, user=None)
+        await check_ai_rate_limit(request, user=None)
     assert exc_info.value.status_code == 429
 
 
-def test_check_ai_rate_limit_keyed_by_user_id():
+async def test_check_ai_rate_limit_keyed_by_user_id(_memory_limiter_only):
     user_a = CurrentUser(id="user-a", email=None, full_name=None, user=None)
     user_b = CurrentUser(id="user-b", email=None, full_name=None, user=None)
     request = _make_request(client_host="10.20.30.99")
     for _ in range(ai_rate_limiter.max_requests):
-        check_ai_rate_limit(request, user=user_a)
-    check_ai_rate_limit(request, user=user_b)
+        await check_ai_rate_limit(request, user=user_a)
+    await check_ai_rate_limit(request, user=user_b)
     with pytest.raises(HTTPException) as exc_info:
-        check_ai_rate_limit(request, user=user_a)
+        await check_ai_rate_limit(request, user=user_a)
+    assert exc_info.value.status_code == 429
+
+
+async def test_check_ai_rate_limit_redis_verdict_wins(monkeypatch):
+    async def _redis_says_limited(key, max_requests, window_seconds):
+        return True
+
+    monkeypatch.setattr("app.deps._redis_rate_limited", _redis_says_limited)
+    request = _make_request(client_host="10.20.30.99")
+    with pytest.raises(HTTPException) as exc_info:
+        await check_ai_rate_limit(request, user=None)
     assert exc_info.value.status_code == 429

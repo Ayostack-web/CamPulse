@@ -10,11 +10,13 @@ import { useStreakAndPoints, useUserBadges } from '@/queries/use-gamification';
 import { useTheme } from '@/providers/theme-provider';
 import { InviteModal } from '@/components/vylix-academic-hub/InviteModal';
 import { fetchReferralCode } from '@/lib/referral';
+import { levelOptionsFor, isLevelValidFor } from '@/lib/levels';
 
 interface University {
   id: string;
   code: string;
   name: string;
+  program_type?: string;
 }
 
 interface College {
@@ -65,6 +67,9 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const [showInvite, setShowInvite] = useState(false);
   const [referralCode, setReferralCode] = useState('');
   const [referralEarned, setReferralEarned] = useState(0);
+
+  const selectedProgramType = universities.find((u) => u.id === selectedUniId)?.program_type;
+  const levelOptions = levelOptionsFor(selectedProgramType);
 
   const fetchUniversities = useCallback(async () => {
     try {
@@ -398,13 +403,18 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">University</label>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                  {selectedProgramType === 'polytechnic' ? 'Polytechnic' : selectedProgramType === 'college_of_education' ? 'College of Education' : 'University'}
+                </label>
                 <select
                   value={selectedUniId}
                   onChange={(e) => {
-                    setSelectedUniId(e.target.value);
+                    const nextUniId = e.target.value;
+                    setSelectedUniId(nextUniId);
                     setSelectedCollegeId('');
                     setSelectedDeptId('');
+                    const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
+                    if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
                   }}
                   className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 >
@@ -453,12 +463,9 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                   className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 >
                   <option value="">Select Level</option>
-                  <option value="100L">100L</option>
-                  <option value="200L">200L</option>
-                  <option value="300L">300L</option>
-                  <option value="400L">400L</option>
-                  <option value="500L">500L</option>
-                  <option value="Spillover">Spillover</option>
+                  {levelOptions.map((lvl) => (
+                    <option key={lvl} value={lvl}>{lvl}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex gap-3 pt-2">

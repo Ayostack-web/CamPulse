@@ -18,6 +18,7 @@ class StreakWithPointsOut(BaseModel):
 
 class PointsOut(BaseModel):
     total_points: int = 0
+    spendable_points: int = 0
 
 
 class TransactionOut(BaseModel):

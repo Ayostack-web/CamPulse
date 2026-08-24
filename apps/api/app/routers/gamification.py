@@ -13,6 +13,7 @@ from app.models import (
     UserStreak, PointsTransaction, User, Badge, UserBadge,
 )
 from app.schemas import StreakOut, PointsOut, TransactionOut, LeaderboardEntry
+from app.services import points as points_service
 
 router = APIRouter(prefix="/gamification", tags=["gamification"])
 
@@ -42,10 +43,12 @@ async def check_in(
         streak.last_activity_at = now
 
     points = 10 + (streak.current_streak // 5) * 5
-    user.user.contribution_score += points
-    db.add(PointsTransaction(user_id=user.id, amount=points, reason="daily_login"))
+    awarded = await points_service.award(
+        db, user.id, points, points_service.REASON_CHECK_IN,
+        description="Daily check-in",
+    )
     await db.flush()
-    return {"streak": streak.current_streak, "points_earned": points}
+    return {"streak": streak.current_streak, "points_earned": awarded}
 
 
 @router.get("/streak", response_model=StreakOut)
@@ -71,7 +74,9 @@ async def get_points(
         select(func.coalesce(func.sum(PointsTransaction.amount), 0))
         .where(PointsTransaction.user_id == user.id)
     )
-    return PointsOut(total_points=result.scalar() or 0)
+    total = int(result.scalar() or 0)
+    spendable = await points_service.spendable_balance(db, user.id)
+    return PointsOut(total_points=total, spendable_points=spendable)
 
 
 @router.get("/points/history", response_model=list[TransactionOut])
@@ -178,5 +183,82 @@ async def get_streak_and_points(
         "current_streak": streak.current_streak if streak else 0,
         "longest_streak": streak.longest_streak if streak else 0,
         "total_points": total_points,
+        "spendable_points": await points_service.spendable_balance(db, user.id),
         "last_activity_at": str(streak.last_activity_at) if streak and streak.last_activity_at else None,
     }
+
+
+class RewardItemOut(BaseModel):
+    code: str
+    name: str
+    description: str
+    category: str
+    points_cost: int
+    affordable: bool
+
+
+class RewardsOut(BaseModel):
+    balance: int
+    items: list[RewardItemOut]
+
+
+@router.get("/rewards", response_model=RewardsOut)
+async def list_rewards(
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    items = await points_service.ensure_reward_items(db)
+    await db.commit()
+    balance = await points_service.spendable_balance(db, user.id)
+    return RewardsOut(
+        balance=balance,
+        items=[
+            RewardItemOut(
+                code=i.code, name=i.name, description=i.description,
+                category=i.category, points_cost=i.points_cost,
+                affordable=balance >= i.points_cost,
+            )
+            for i in items
+        ],
+    )
+
+
+class RedeemRequest(BaseModel):
+    reward_code: str
+
+
+class RedeemOut(BaseModel):
+    message: str
+    reward_code: str
+    name: str
+    points_spent: int
+    queries_granted: int
+    expires_at: str
+    balance_after: int
+
+
+@router.post("/rewards/redeem", response_model=RedeemOut)
+async def redeem_reward(
+    payload: RedeemRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await points_service.redeem_reward(db, user.id, payload.reward_code.strip())
+    except ValueError as exc:
+        detail = {
+            "unknown_reward": "Unknown reward",
+            "insufficient_points": "Not enough points for this reward",
+        }.get(str(exc), "Could not redeem reward")
+        raise HTTPException(status_code=400, detail=detail)
+
+    await db.commit()
+    return RedeemOut(
+        message=f"{result['name']} activated on your account",
+        reward_code=result["reward_code"],
+        name=result["name"],
+        points_spent=result["points_spent"],
+        queries_granted=result["queries_granted"],
+        expires_at=str(result["expires_at"]),
+        balance_after=result["balance_after"],
+    )

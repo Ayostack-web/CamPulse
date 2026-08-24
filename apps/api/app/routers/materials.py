@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import socket
 import uuid
@@ -19,10 +18,15 @@ from app.database import get_db
 from app.deps import CurrentUser, get_current_user, get_optional_user
 from app.entitlements import storage_allowance, storage_used
 from app.models import (
-    Material, Topic, Course, User, Department, MaterialProcessingStatus,
+    Material, Topic, Course, User, Department, College, MaterialProcessingStatus,
     MaterialUnlock, PointsTransaction,
 )
+from app.services.course_scope import course_visibility_filter, find_course
+from app.services import points as points_service
 from app.services.storage import get_storage
+from app.services.upload_stream import (
+    read_spool, replace_spooled_contents, stream_async_upload_to_spool,
+)
 from app.services.vector_store import VectorStore
 from app.tasks import process_material_task
 
@@ -91,11 +95,14 @@ class MaterialOut(BaseModel):
     questions: dict | None = None
     tips: dict | None = None
     uploaded_at: str | None = None
+    last_opened_at: str | None = None
     is_seed: bool = False
     is_shared: bool = True
     is_past_question: bool = False
     exam_year: int | None = None
     semester: str | None = None
+    already_existed: bool = False
+    points_awarded: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -134,6 +141,7 @@ def _material_to_out(m: Material) -> MaterialOut:
         processing_status=m.processing_status.value,
         summary=m.summary, questions=m.questions, tips=m.tips,
         uploaded_at=str(m.uploaded_at) if m.uploaded_at else None,
+        last_opened_at=str(m.last_opened_at) if m.last_opened_at else None,
         is_seed=m.is_seed, is_shared=m.is_shared,
         is_past_question=m.is_past_question,
         exam_year=m.exam_year, semester=m.semester,
@@ -145,20 +153,43 @@ async def _resolve_topic(
     course_code: str | None,
     department_code: str | None,
     user_id: str,
+    university_id: str | None = None,
 ) -> str:
     if not course_code:
+        general_visibility = [
+            Course.is_general == True,  # noqa: E712
+            Topic.is_active == True,  # noqa: E712
+        ]
+        visibility = course_visibility_filter(university_id)
+        if visibility is not None:
+            general_visibility.append(visibility)
         dept_topic = await db.execute(
-            select(Topic).join(Course, Course.id == Topic.course_id)
-            .where(Course.is_general == True, Topic.is_active == True)
-            .order_by(Topic.last_activity.desc()).limit(1)
+            select(Topic)
+            .join(Course, Course.id == Topic.course_id)
+            .join(Department, Department.id == Course.department_id, isouter=True)
+            .join(College, College.id == Department.college_id, isouter=True)
+            .where(*general_visibility)
+            .order_by(Topic.last_activity.desc())
+            .limit(1)
         )
         topic = dept_topic.scalar_one_or_none()
         if topic:
             return topic.id
-        course = await db.execute(
-            select(Course).where(Course.is_general == True).limit(1)
+        course_result = await db.execute(
+            select(Course)
+            .join(Department, Department.id == Course.department_id, isouter=True)
+            .join(College, College.id == Department.college_id, isouter=True)
+            .where(
+                Course.is_general == True,  # noqa: E712
+                *(
+                    [visibility]
+                    if visibility is not None
+                    else []
+                ),
+            )
+            .limit(1)
         )
-        course = course.scalar_one_or_none()
+        course = course_result.scalar_one_or_none()
         if not course:
             raise HTTPException(status_code=400, detail="No course found. Provide a course code.")
         topic = Topic(
@@ -169,15 +200,13 @@ async def _resolve_topic(
         await db.flush()
         return topic.id
 
-    result = await db.execute(
-        select(Course).where(Course.code.ilike(course_code)).limit(1)
-    )
-    course = result.scalar_one_or_none()
-    if not course:
+    resolved = await find_course(db, course_code, university_id)
+    if resolved is None:
         raise HTTPException(
             status_code=404,
             detail=f"Course '{course_code}' not found. Check the code or upload without one."
         )
+    course = resolved[0]
 
     result = await db.execute(
         select(Topic).where(Topic.course_id == course.id, Topic.is_active == True)
@@ -215,19 +244,28 @@ async def upload_material(
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="Only PDF, JPEG, PNG allowed")
 
-    data = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
-    if len(data) > max_bytes:
+    # Stream the body into a spooled temp file (disk-backed once >1MB) with
+    # the size check applied per chunk and the dedup hash computed in-flight,
+    # instead of buffering the whole upload in RAM.
+    try:
+        spool, file_size, content_hash = await stream_async_upload_to_spool(file, max_bytes)
+    except ValueError:
         raise HTTPException(status_code=400, detail=f"File exceeds {settings.max_upload_mb}MB limit")
 
-    if file.content_type == "application/pdf":
-        data = await anyio.to_thread.run_sync(
-            lambda: _compress_pdf_bytes(data, file.filename or "document.pdf")
+    # Compression is best-effort (compress_pdf_bytes never raises) and only
+    # for PDFs small enough to justify holding the bytes once.
+    if file.content_type == "application/pdf" and file_size <= MAX_COMPRESS_BYTES:
+        compressed = await anyio.to_thread.run_sync(
+            lambda: _compress_pdf_bytes(read_spool(spool), file.filename or "document.pdf")
         )
+        replace_spooled_contents(spool, compressed)
+        file_size = len(compressed)
 
     allowance = await storage_allowance(db, user.id)
     used = await storage_used(db, user.id)
-    if used + len(data) > allowance:
+    if used + file_size > allowance:
+        spool.close()
         raise HTTPException(
             status_code=400,
             detail=(
@@ -237,7 +275,9 @@ async def upload_material(
             ),
         )
 
-    topic_id = await _resolve_topic(db, course_code, department_code, user.id)
+    topic_id = await _resolve_topic(
+        db, course_code, department_code, user.id, user.user.university_id
+    )
 
     material_id = str(uuid.uuid4())
     ext = file.filename.split(".")[-1] if file.filename else "pdf"
@@ -245,7 +285,6 @@ async def upload_material(
     # Content-address dedup: files whose compressed bytes already exist in the
     # vault reuse the stored blob instead of uploading a duplicate. The new
     # material still owns its own entry and its own quota share.
-    content_hash = hashlib.sha256(data).hexdigest()
     existing = (
         await db.execute(
             select(Material)
@@ -253,44 +292,101 @@ async def upload_material(
             .limit(1)
         )
     ).scalar_one_or_none()
+    already_existed = existing is not None
 
     storage = get_storage()
-    if existing and existing.file_path:
-        url = existing.file_url
-        storage_path = existing.file_path
-    else:
-        storage_path = f"materials/{material_id}.{ext}"
-        try:
-            url = await storage.upload(
-                settings.supabase_storage_bucket, storage_path, data, file.content_type
-            )
-        except Exception as exc:
-            logger.warning("Storage upload failed for %s: %s", file.filename, exc)
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not save file to storage ({type(exc).__name__}: {exc}). Please try again.",
-            ) from exc
+    try:
+        if existing and existing.file_path:
+            url = existing.file_url
+            storage_path = existing.file_path
+        else:
+            storage_path = f"materials/{material_id}.{ext}"
+            try:
+                url = await storage.upload(
+                    settings.supabase_storage_bucket, storage_path, spool, file.content_type
+                )
+            except Exception as exc:
+                logger.warning("Storage upload failed for %s: %s", file.filename, exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Could not save file to storage ({type(exc).__name__}: {exc}). Please try again.",
+                ) from exc
 
-    material = Material(
-        id=material_id,
-        file_name=title or file.filename or f"material.{ext}",
-        file_url=url,
-        file_path=storage_path,
-        file_size=len(data),
-        topic_id=topic_id,
-        uploader_id=user.id,
-        processing_status=MaterialProcessingStatus.QUEUED,
-        is_past_question=is_past_question == "true",
-        exam_year=int(exam_year) if exam_year and exam_year.isdigit() else None,
-        semester=semester if semester in ("FIRST", "SECOND") else None,
-        content_hash=content_hash,
-    )
-    db.add(material)
-    await db.flush()
+        material = Material(
+            id=material_id,
+            file_name=title or file.filename or f"material.{ext}",
+            file_url=url,
+            file_path=storage_path,
+            file_size=file_size,
+            topic_id=topic_id,
+            uploader_id=user.id,
+            processing_status=MaterialProcessingStatus.QUEUED,
+            is_past_question=is_past_question == "true",
+            exam_year=int(exam_year) if exam_year and exam_year.isdigit() else None,
+            semester=semester if semester in ("FIRST", "SECOND") else None,
+            content_hash=content_hash,
+        )
+        db.add(material)
+        await db.flush()
+    finally:
+        spool.close()
+
+    # Study points reward distinct past-question uploads only. A file the
+    # vault has seen before (any uploader) earns nothing and is flagged so
+    # the client can show "this PQ already exists".
+    points_awarded = 0
+    if material.is_past_question and not already_existed:
+        points_awarded = await points_service.award(
+            db, user.id, points_service.PQ_UPLOAD_POINTS,
+            points_service.REASON_PQ_UPLOAD,
+            description="Uploaded a new past question",
+            related_id=material.id,
+        )
+        distinct_count = (
+            await db.execute(
+                select(func.count(func.distinct(Material.content_hash))).where(
+                    Material.uploader_id == user.id,
+                    Material.is_past_question == True,  # noqa: E712
+                    Material.content_hash.isnot(None),
+                )
+            )
+        ).scalar_one()
+        if (
+            points_service.PQ_MILESTONE_EVERY
+            and distinct_count % points_service.PQ_MILESTONE_EVERY == 0
+        ):
+            bonus = await points_service.award(
+                db, user.id, points_service.PQ_MILESTONE_POINTS,
+                points_service.REASON_PQ_MILESTONE,
+                description=f"{distinct_count} past questions uploaded",
+            )
+            points_awarded += bonus
 
     try:
+        processed_twin = (
+            await db.execute(
+                select(Material)
+                .where(
+                    Material.content_hash == content_hash,
+                    Material.processing_status == MaterialProcessingStatus.COMPLETED,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
         # Do not wait on Celery's result backend here; uploads must stay fast even if Redis is down.
-        if not _celery_broker_reachable():
+        if processed_twin:
+            material.summary = processed_twin.summary
+            material.questions = processed_twin.questions
+            material.tips = processed_twin.tips
+            material.processing_status = MaterialProcessingStatus.COMPLETED
+            material.processed_at = processed_twin.processed_at
+            logger.info(
+                "Material %s reuses insights from %s (identical content hash)",
+                material.id,
+                processed_twin.id,
+            )
+        elif not _celery_broker_reachable():
             logger.warning(
                 "Celery broker not reachable; skipping enqueue for material %s; it will stay QUEUED",
                 material.id,
@@ -307,12 +403,15 @@ async def upload_material(
             material.processing_job_id = task.id
     except Exception:
         logger.exception(
-            "Could not enqueue processing for material %s; it will stay QUEUED", material.id
+            "Could not finalize processing for material %s; it will stay QUEUED", material.id
         )
     await db.flush()
 
     await db.refresh(material, ["topic"])
-    return _material_to_out(material)
+    out = _material_to_out(material)
+    out.already_existed = already_existed
+    out.points_awarded = points_awarded
+    return out
 
 
 @router.delete("/{material_id}")
@@ -404,6 +503,8 @@ async def list_my_materials(
 @router.get("/course/{course_id}", response_model=list[MaterialOut])
 async def list_course_materials(
     course_id: str,
+    limit: int = Query(default=100, ge=1, le=300),
+    offset: int = Query(default=0, ge=0),
     user: CurrentUser | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -421,6 +522,8 @@ async def list_course_materials(
         .join(Topic, Topic.id == Material.topic_id)
         .where(Topic.course_id == course_id, Topic.is_active == True, Material.is_shared == True)
         .order_by(Material.uploaded_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
     return [_material_to_out(m) for m in result.scalars().all()]
 
@@ -448,9 +551,24 @@ async def list_recent_materials(
             (Course.department_id == user.user.department_id) | (Course.is_general == True)
         )
     
-    query = query.order_by(Material.uploaded_at.desc()).limit(limit)
+    query = query.order_by(func.coalesce(Material.last_opened_at, Material.uploaded_at).desc()).limit(limit)
     result = await db.execute(query)
     return [_material_to_out(m) for m in result.scalars().all()]
+
+
+@router.post("/{material_id}/open")
+async def mark_material_opened(
+    material_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    material = await db.get(Material, material_id)
+    if not material:
+        raise HTTPException(status_code=404, detail="Material not found")
+
+    material.last_opened_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/past-questions", response_model=PastQuestionListOut)

@@ -4,9 +4,7 @@ import React, { useState, useCallback } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useAuth } from '@/context/auth-context';
 import { useProgressiveGating, isInCurrentSession } from '@/context/progressive-gating-context';
-
-
-const LEVELS = ['100L', '200L', '300L', '400L', '500L', 'Spillover'] as const;
+import { levelOptionsFor } from '@/lib/levels';
 
 export function LevelUpdateBanner() {
   const supabase = getSupabaseBrowserClient();
@@ -46,6 +44,7 @@ export function LevelUpdateBanner() {
   }, [supabase, openGraduationModal]);
 
   const hasCurrentSessionLevel = isInCurrentSession(user?.levelUpdatedAt);
+  const levels = levelOptionsFor(user?.programType);
   if (!user || user.status !== 'STUDENT' || hasCurrentSessionLevel) return null;
 
   return (
@@ -67,7 +66,7 @@ export function LevelUpdateBanner() {
           )}
 
           <div className="flex flex-wrap gap-2 mt-4">
-            {LEVELS.map((lvl) => (
+            {levels.map((lvl) => (
               <button
                 key={lvl}
                 onClick={() => handleSelect(lvl)}

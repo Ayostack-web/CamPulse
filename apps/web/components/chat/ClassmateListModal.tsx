@@ -6,11 +6,13 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/auth-context';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useClassmates, useCreateConversation, type ConversationDetail } from '@/queries/use-collaboration';
+import { levelOptionsFor, isLevelValidFor } from '@/lib/levels';
 
 interface University {
   id: string;
   code: string;
   name: string;
+  program_type?: string;
 }
 
 interface College {
@@ -47,6 +49,9 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
   const [currentLevel, setCurrentLevel] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedProgramType = universities.find((u) => u.id === selectedUniId)?.program_type;
+  const levelOptions = levelOptionsFor(selectedProgramType);
 
   const needsProfile = !user?.collegeId || !user?.departmentCode;
 
@@ -198,10 +203,19 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
               )}
 
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">University</label>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                  {selectedProgramType === 'polytechnic' ? 'Polytechnic' : selectedProgramType === 'college_of_education' ? 'College of Education' : 'University'}
+                </label>
                 <select
                   value={selectedUniId}
-                  onChange={(e) => { setSelectedUniId(e.target.value); setSelectedCollegeId(''); setSelectedDeptId(''); }}
+                  onChange={(e) => {
+                    const nextUniId = e.target.value;
+                    setSelectedUniId(nextUniId);
+                    setSelectedCollegeId('');
+                    setSelectedDeptId('');
+                    const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
+                    if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
+                  }}
                   className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 >
                   <option value="">{universities.length === 0 ? 'No universities loaded' : 'Select your university'}</option>
@@ -250,12 +264,9 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
                   className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 >
                   <option value="">Select your level</option>
-                  <option value="100L">100L</option>
-                  <option value="200L">200L</option>
-                  <option value="300L">300L</option>
-                  <option value="400L">400L</option>
-                  <option value="500L">500L</option>
-                  <option value="Spillover">Spillover</option>
+                  {levelOptions.map((lvl) => (
+                    <option key={lvl} value={lvl}>{lvl}</option>
+                  ))}
                 </select>
               </div>
 

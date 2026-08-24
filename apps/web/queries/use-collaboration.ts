@@ -1,6 +1,11 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { authFetch } from '@/lib/auth-fetch';
 
 export interface UserBrief {
@@ -88,6 +93,8 @@ export interface UnreadSummary {
 
 // ── Hooks ──────────────────────────────────────────────────────────
 
+const MESSAGES_PAGE_SIZE = 50;
+
 export function useConversations() {
   return useQuery({
     queryKey: ['conversations'],
@@ -96,13 +103,48 @@ export function useConversations() {
   });
 }
 
+/**
+ * Message history as cursor-paginated pages, each page chronological
+ * (oldest → newest). Page 1 is the latest window; further pages are older
+ * history fetched with the `before` cursor for upward infinite scroll.
+ */
 export function useMessages(conversationId: string | null) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['messages', conversationId],
-    queryFn: () =>
-      authFetch(`/api/collaboration/conversations/${conversationId}/messages?take=50`) as Promise<Message[]>,
     enabled: !!conversationId,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) => {
+      const base = `/api/collaboration/conversations/${conversationId}/messages`;
+      if (pageParam) {
+        return await authFetch(
+          `${base}?before=${encodeURIComponent(pageParam)}&limit=${MESSAGES_PAGE_SIZE}`
+        ) as Promise<Message[]>;
+      }
+      const latest = await authFetch(`${base}?page=1&limit=${MESSAGES_PAGE_SIZE}`) as Message[];
+      // API returns newest-first; normalize so pages concatenate chronologically.
+      return [...latest].reverse();
+    },
+    getNextPageParam: (lastPage) => {
+      if (lastPage.length < MESSAGES_PAGE_SIZE) return undefined;
+      return lastPage[0]?.createdAt ?? undefined;
+    },
   });
+}
+
+/** Apply a change to the flat message list while preserving page boundaries. */
+function updateMessagesData(
+  old: InfiniteData<Message[]> | undefined,
+  updater: (msgs: Message[]) => Message[]
+): InfiniteData<Message[]> | undefined {
+  if (!old) return old;
+  const all = updater(old.pages.flat());
+  const pages: Message[][] = [];
+  let offset = 0;
+  for (const page of old.pages) {
+    pages.push(all.slice(offset, offset + page.length));
+    offset += page.length;
+  }
+  return { ...old, pages };
 }
 
 export function useUnreadSummary() {
@@ -166,7 +208,7 @@ export function useSendMessage(userId?: string) {
     onMutate: async ({ conversationId, content }) => {
       await qc.cancelQueries({ queryKey: ['messages', conversationId] });
 
-      const previous = qc.getQueryData<Message[]>(['messages', conversationId]);
+      const previous = qc.getQueryData<InfiniteData<Message[]>>(['messages', conversationId]);
 
       const optimistic: Message = {
         id: `optimistic-${Date.now()}`,
@@ -187,15 +229,17 @@ export function useSendMessage(userId?: string) {
         receipts: [],
       };
 
-      qc.setQueryData<Message[]>(['messages', conversationId], (old) =>
-        old ? [...old, optimistic] : [optimistic]
+      qc.setQueryData<InfiniteData<Message[]>>(['messages', conversationId], (old) =>
+        updateMessagesData(old, (msgs) => [...msgs, optimistic])
       );
 
       return { previous };
     },
     onSuccess: (data) => {
-      qc.setQueryData<Message[]>(['messages', data.conversationId], (old) =>
-        old ? old.map((m) => (m.id.startsWith('optimistic-') ? data : m)) : [data]
+      qc.setQueryData<InfiniteData<Message[]>>(['messages', data.conversationId], (old) =>
+        updateMessagesData(old, (msgs) =>
+          msgs.map((m) => (m.id.startsWith('optimistic-') ? data : m))
+        )
       );
       qc.invalidateQueries({ queryKey: ['messages', data.conversationId] });
       qc.invalidateQueries({ queryKey: ['conversations'] });

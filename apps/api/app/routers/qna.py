@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.deps import CurrentUser, get_current_user
@@ -81,19 +82,20 @@ async def list_questions(
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # selectinload fetches all answers in one extra query — the previous
+    # per-question loop was a textbook N+1.
     result = await db.execute(
         select(TopicQuestion)
+        .options(selectinload(TopicQuestion.answers))
         .where(TopicQuestion.topic_id == topic_id)
         .order_by(TopicQuestion.created_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
     )
-    questions = result.scalars().all()
+    questions = result.scalars().unique().all()
     out = []
     for q in questions:
-        ans = await db.execute(
-            select(QuestionAnswer).where(QuestionAnswer.question_id == q.id).order_by(QuestionAnswer.is_accepted.desc())
-        )
+        answers = sorted(q.answers, key=lambda a: a.is_accepted, reverse=True)
         out.append(QuestionOut(
             id=q.id, topic_id=q.topic_id, author_id=q.author_id,
             title=q.title, content=q.content, help_count=q.help_count,
@@ -103,7 +105,7 @@ async def list_questions(
                 id=a.id, question_id=a.question_id, author_id=a.author_id,
                 content=a.content, help_count=a.help_count, is_accepted=a.is_accepted,
                 created_at=str(a.created_at) if a.created_at else None,
-            ) for a in ans.scalars().all()],
+            ) for a in answers],
         ))
     return out
 

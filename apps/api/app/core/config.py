@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0")
 
     # Celery
-    celery_broker_url: str = Field(default="redis://localhost:6379/0")
+    celery_broker_url: str = Field(default="redis://localhost:6379/2")
     celery_result_backend: str = Field(default="redis://localhost:6379/1")
 
     # CORS
@@ -52,8 +52,15 @@ class Settings(BaseSettings):
     appwrite_api_key: str = Field(default="")
     appwrite_storage_bucket_id: str = Field(default="")
 
+    # Study points (referrals / PQ uploads / redemption)
+    points_weekly_earn_cap: int = Field(default=300, ge=1)
+    points_expiry_days: int = Field(default=90, ge=1)
+    max_referees_per_referrer: int = Field(default=5, ge=1)
+
     # AI
     gemini_api_key: str | None = Field(default=None)
+    # Gate the expensive Pro model; false forces every agent call onto Flash-Lite.
+    pro_tier_enabled: bool = Field(default=True)
 
     # Vector search
     # "auto" uses pgvector when GEMINI_API_KEY is set, otherwise ChromaDB.

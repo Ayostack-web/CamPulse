@@ -181,13 +181,18 @@ By default, `next-pwa` uses:
 - **CSS/JS**: Cache, serve from cache with network fallback
 - **Images**: Cache, serve from cache
 - **HTML**: Network first, fallback to cache
-- **API Calls**: Network only
+- **API Calls**: Network only (signed material URLs expire, so they must never be cached)
+
+PDF bytes are cached separately from the service worker: `lib/pdf-cache.ts`
+persists them in IndexedDB (store `vylix-pdf-cache`) keyed by material id, with
+a ~250 MB LRU eviction cap. Opening a document downloads and caches it once;
+after that it renders instantly and works fully offline.
 
 You can customize in `next.config.mjs` if needed.
 
 ### **Offline Support**
 With your existing IndexedDB setup:
-1. ✅ PDFs, materials cached locally
+1. ✅ PDFs cached locally (`lib/pdf-cache.ts`, after first view or "Save Offline")
 2. ✅ Static assets cached by service worker
 3. ✅ App shell loaded offline
 4. 🟡 API calls show cached data or offline message

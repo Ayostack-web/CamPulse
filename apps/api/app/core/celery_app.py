@@ -18,6 +18,10 @@ celery_app.conf.task_serializer = "json"
 celery_app.conf.result_serializer = "json"
 celery_app.conf.accept_content = ["json"]
 celery_app.conf.task_result_expires = 3600
+celery_app.conf.task_acks_late = True
+celery_app.conf.task_reject_on_worker_lost = True
+celery_app.conf.worker_prefetch_multiplier = 1
+celery_app.conf.broker_connection_retry_on_startup = True
 
 celery_app.conf.beat_schedule = {
     "streak-reminders": {

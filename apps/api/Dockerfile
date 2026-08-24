@@ -15,7 +15,6 @@ COPY app/ app/
 COPY db/ db/
 EXPOSE 4000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000"]
-
 FROM base AS worker
 COPY requirements-lean.txt .
 RUN pip install --no-cache-dir -r requirements-lean.txt
@@ -34,4 +33,7 @@ COPY db/ db/
 COPY alembic.ini .
 COPY migrations/ migrations/
 EXPOSE 4000
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 4000
+# NOTE: migrations are NOT run at boot — racing replicas would run alembic
+# concurrently. Run them as a one-shot deploy step instead:
+#   docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+CMD uvicorn app.main:app --host 0.0.0.0 --port 4000 --workers "${WEB_CONCURRENCY:-2}"

@@ -3,6 +3,29 @@
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { fetchApi } from '@/lib/api-request';
 
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const supabase = getSupabaseBrowserClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not authenticated');
+  return { Authorization: `Bearer ${session.access_token}` };
+}
+
+/**
+ * Like authFetch but resolves to the raw Response so callers can inspect
+ * status codes (e.g. 429 DAILY_LIMIT_REACHED → upgrade modal).
+ */
+export async function authFetchRaw(path: string, options?: RequestInit): Promise<Response> {
+  const authHeaders = await getAuthHeaders();
+  return fetchApi(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...options?.headers,
+    },
+  });
+}
+
 export async function authFetch(path: string, options?: RequestInit): Promise<unknown> {
   const supabase = getSupabaseBrowserClient();
   const { data: { session } } = await supabase.auth.getSession();

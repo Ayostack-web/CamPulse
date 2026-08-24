@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/auth-context';
 import {
@@ -144,10 +144,22 @@ function MessageBubble({
 
 export function ConversationView({ conversationId, title, onBack, otherUser }: ConversationViewProps) {
   const { user } = useAuth();
-  const { data: messages, isLoading } = useMessages(conversationId);
+  const {
+    data: messagesData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useMessages(conversationId);
   const sendMessage = useSendMessage(user?.id);
   const editMessage = useEditMessage();
   const deleteMessage = useDeleteMessage();
+
+  // Pages are chronological (oldest → newest); flatten for rendering.
+  const messages: Message[] = useMemo(
+    () => messagesData?.pages.flat() ?? [],
+    [messagesData]
+  );
 
   useRealtimeMessages(conversationId, user?.id);
   const markRead = useMarkRead();
@@ -161,18 +173,48 @@ export function ConversationView({ conversationId, title, onBack, otherUser }: C
 
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isLoadingOlderRef = useRef(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+
+  // Auto-scroll only when the newest message changes — prepending older
+  // history must not yank the viewport to the bottom.
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMessageId]);
 
   useEffect(() => {
-    if (messages && messages.length > 0 && user) {
+    if (messages.length > 0 && user) {
       markRead.mutate({ conversationId, messageId: messages[messages.length - 1].id });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, messages?.length]);
+  }, [conversationId, lastMessageId]);
+
+  // Upward infinite scroll: load one page of older history at a time and
+  // compensate the scroll offset so the viewport stays anchored on the
+  // messages the user is reading.
+  const handleScroll = async () => {
+    const container = scrollContainerRef.current;
+    if (!container || !hasNextPage || isFetchingNextPage || isLoadingOlderRef.current) return;
+    if (container.scrollTop > 120) return;
+
+    isLoadingOlderRef.current = true;
+    try {
+      const previousHeight = container.scrollHeight;
+      const previousTop = container.scrollTop;
+      await fetchNextPage();
+      requestAnimationFrame(() => {
+        if (!scrollContainerRef.current) return;
+        const delta = scrollContainerRef.current.scrollHeight - previousHeight;
+        scrollContainerRef.current.scrollTop = previousTop + delta;
+      });
+    } finally {
+      isLoadingOlderRef.current = false;
+    }
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -201,7 +243,7 @@ export function ConversationView({ conversationId, title, onBack, otherUser }: C
 
   const otherTyping = typingUsers
     .filter((t) => t.userId !== user?.id)
-    .map((t) => messages?.find((m) => m.senderId === t.userId)?.sender.fullName ?? 'Someone')
+    .map((t) => messages.find((m) => m.senderId === t.userId)?.sender.fullName ?? 'Someone')
     .filter((v, i, a) => a.indexOf(v) === i);
 
   return (
@@ -246,15 +288,27 @@ export function ConversationView({ conversationId, title, onBack, otherUser }: C
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={scrollContainerRef} onScroll={handleScroll}>
         <div className="mx-auto max-w-3xl px-4 py-4">
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-2">
+              <svg className="h-4 w-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
+            </div>
+          )}
           {isLoading ? (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-12 w-full rounded-2xl" />
               ))}
             </div>
-          ) : !messages || messages.length === 0 ? (
+          ) : messages.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
                 <span className="text-3xl">💬</span>

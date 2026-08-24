@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -332,7 +333,9 @@ async def generate_flashcards(
     user: CurrentUser = Depends(check_ai_token_quota),
     db: AsyncSession = Depends(get_db),
 ):
-    results = _vector_store.query("key concepts definitions formulas", top_k=5)
+    results = await run_in_threadpool(
+        _vector_store.query, "key concepts definitions formulas", top_k=5
+    )
     doc_results = [r for r in results if r.document_id == payload.document_id]
     relevant = doc_results if doc_results else results[:3]
 
@@ -351,7 +354,13 @@ async def generate_flashcards(
     )
 
     try:
-        response = gemini_chat(prompt, "You are an expert academic flashcard generator. Create precise, study-effective flashcards.", user_id=user.id)
+        response = await run_in_threadpool(
+            gemini_chat,
+            prompt,
+            "You are an expert academic flashcard generator. Create precise, study-effective flashcards.",
+            user_id=user.id,
+            feature="flashcards",
+        )
     except GeminiError as exc:
         status_code, detail = error_response(exc)
         raise HTTPException(status_code=status_code, detail=detail)

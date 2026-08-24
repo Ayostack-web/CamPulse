@@ -1,7 +1,9 @@
 services:
   redis:
     image: redis:7-alpine
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    # volatile-lru only evicts TTL'd keys (rate-limit counters, caches), so
+    # Celery broker keys (db 2, no TTL) can never be silently dropped.
+    command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -17,12 +19,19 @@ services:
     build:
       context: ./apps/api
       target: api-lean
-    ports:
-      - "127.0.0.1:4000:4000"
+    # No host port publish: replicas are reached by Caddy over the compose
+    # network (DNS name `api`), so `--scale api=N` works without port clashes.
+    expose:
+      - "4000"
     env_file:
       - .env.production
     environment:
       REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/2
+      # Pin pgvector in prod: the Chroma fallback is a SQLite-backed local
+      # index on the shared api_tmp volume — it corrupts/locks when the api
+      # and worker containers (or multiple replicas) touch it concurrently.
+      VECTOR_STORE_BACKEND: pgvector
     depends_on:
       redis:
         condition: service_healthy
@@ -38,8 +47,9 @@ services:
     env_file:
       - .env.production
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/2
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      VECTOR_STORE_BACKEND: pgvector
     depends_on:
       redis:
         condition: service_healthy
@@ -56,7 +66,7 @@ services:
     env_file:
       - .env.production
     environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/2
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     depends_on:
       redis:

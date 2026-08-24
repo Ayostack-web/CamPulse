@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.deps import verify_maintenance_key
 from app.models import University, College, Department, DepartmentCatalog
 
 router = APIRouter(prefix="/colleges", tags=["colleges"])
@@ -34,6 +35,7 @@ class UniversityOut(BaseModel):
     id: str
     code: str
     name: str
+    program_type: str = "university"
 
     model_config = {"from_attributes": True}
 
@@ -1015,9 +1017,85 @@ SEED_DATA: list[dict] = [
     {"code": "UNIPORT", "name": "University of Port Harcourt"},
 ]
 
+_POLY_SCHOOLS = [
+    {
+        "code": "ENG",
+        "name": "School of Engineering",
+        "duration_years": 4,
+        "departments": [
+            ("CVE", "Civil Engineering Technology"),
+            ("EET", "Electrical/Electronic Engineering Technology"),
+            ("MCE", "Mechanical Engineering Technology"),
+            ("MCT", "Computer Engineering Technology"),
+        ],
+    },
+    {
+        "code": "ESC",
+        "name": "School of Environmental Studies",
+        "duration_years": 4,
+        "departments": [
+            ("ARC", "Architectural Technology"),
+            ("EST", "Estate Management and Valuation"),
+            ("QSB", "Quantity Surveying"),
+            ("SUR", "Surveying and Geo-informatics"),
+        ],
+    },
+    {
+        "code": "ASC",
+        "name": "School of Applied Science and Technology",
+        "duration_years": 4,
+        "departments": [
+            ("CPT", "Computer Science"),
+            ("SLT", "Science Laboratory Technology"),
+            ("STA", "Statistics"),
+            ("FST", "Food Science and Technology"),
+        ],
+    },
+    {
+        "code": "BMS",
+        "name": "School of Business and Management Studies",
+        "duration_years": 4,
+        "departments": [
+            ("ACC", "Accountancy"),
+            ("BAM", "Business Administration and Management"),
+            ("MKT", "Marketing"),
+            ("PUB", "Public Administration"),
+        ],
+    },
+    {
+        "code": "LIS",
+        "name": "School of Liberal and Communication Studies",
+        "duration_years": 4,
+        "departments": [
+            ("MAC", "Mass Communication"),
+            ("OTM", "Office Technology and Management"),
+        ],
+    },
+]
+
+_POLYTECHNIC_SEED_DATA = [
+    {"code": code, "name": name, "program_type": "polytechnic",
+     "colleges": [dict(s, departments=list(s["departments"])) for s in _POLY_SCHOOLS]}
+    for code, name in [
+        ("YABATECH", "Yaba College of Technology"),
+        ("POLYIBADAN", "The Polytechnic Ibadan"),
+        ("KADPOLY", "Kaduna Polytechnic"),
+        ("FEDPOLELE", "Federal Polytechnic, Ilaro"),
+        ("AUCHIPOLY", "Auchi Polytechnic"),
+        ("NEKEDEPOLY", "Federal Polytechnic, Nekede"),
+        ("FEDPOLYADO", "Federal Polytechnic, Ado-Ekiti"),
+        ("IMTENUGU", "Institute of Management and Technology, Enugu"),
+        ("KWARAPOLY", "Kwara State Polytechnic"),
+        ("OGUNPOLY", "Ogun State Institute of Technology"),
+    ]
+]
+
 
 @router.post("/seed")
-async def seed_colleges(db: AsyncSession = Depends(get_db)):
+async def seed_colleges(
+    db: AsyncSession = Depends(get_db),
+    _key: str = Depends(verify_maintenance_key),
+):
     existing_university_names = {
         _normalize_name(n)
         for n in (await db.execute(select(University.name))).scalars().all()
@@ -1029,7 +1107,7 @@ async def seed_colleges(db: AsyncSession = Depends(get_db)):
     added = 0
     skipped = 0
 
-    for uni_data in SEED_DATA:
+    for uni_data in [*SEED_DATA, *_POLYTECHNIC_SEED_DATA]:
         if _normalize_name(uni_data["name"]) in existing_university_names:
             skipped += 1
             continue
@@ -1039,6 +1117,7 @@ async def seed_colleges(db: AsyncSession = Depends(get_db)):
             id=uni_id,
             code=uni_data["code"],
             name=uni_data["name"],
+            program_type=uni_data.get("program_type", "university"),
         )
         db.add(university)
 

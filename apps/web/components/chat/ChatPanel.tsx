@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { authFetchRaw } from '@/lib/auth-fetch';
 
 
 interface Message {
@@ -32,9 +33,8 @@ export function ChatPanel({ documentId, documentTitle, onClose }: ChatPanelProps
     setLoading(true);
 
     try {
-      const res = await fetch(`/api/documents/chat`, {
+      const res = await authFetchRaw(`/api/documents/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_id: documentId, query: text.trim() }),
       });
 

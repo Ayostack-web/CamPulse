@@ -45,6 +45,12 @@ fi
 echo "[6/6] Starting services..."
 docker compose -f docker-compose.prod.yml down
 docker compose -f docker-compose.prod.yml build --no-cache
+
+# One-shot migration BEFORE the API starts — never inside the container CMD,
+# or concurrent replicas would race alembic on every deploy.
+echo "Running database migrations..."
+docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+
 docker compose -f docker-compose.prod.yml up -d
 
 echo ""

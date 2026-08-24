@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { offlineStore } from '@/lib/offline-store'
 import { useAuth } from '@/context/auth-context'
 import { PaywallModal } from '@/components/profile/PaywallModal'
+import { authFetchRaw } from '@/lib/auth-fetch'
 
 import type { DocumentInfo } from '../ThreePanelLayout'
 
@@ -87,9 +88,8 @@ export function AIProfessorTab({ selectedDoc, isReadOnly = false }: AIProfessorT
 
     try {
       if (selectedDoc) {
-        const res = await fetch(`/api/documents/chat`, {
+        const res = await authFetchRaw(`/api/documents/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             document_id: selectedDoc.id,
             query: userMessage,
@@ -116,6 +116,9 @@ export function AIProfessorTab({ selectedDoc, isReadOnly = false }: AIProfessorT
         if (res.status === 429) {
           const err = await res.json().catch(() => ({}))
           if (err.detail === 'DAILY_LIMIT_REACHED') {
+            if (res.headers.get('X-Quota-Scope') === 'paid-pool') {
+              return 'Your pass has run out. Grab an AI Top-Up from your profile to keep going — no need to wait for midnight.'
+            }
             setShowLimitModal(true)
             return 'You\'ve reached your daily AI query limit. Upgrade to premium for more.'
           }
@@ -123,15 +126,17 @@ export function AIProfessorTab({ selectedDoc, isReadOnly = false }: AIProfessorT
         }
       }
 
-      const res = await fetch(`/api/documents/general-chat`, {
+      const res = await authFetchRaw(`/api/documents/general-chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history }),
       })
 
       if (res.status === 429) {
         const err = await res.json().catch(() => ({}))
         if (err.detail === 'DAILY_LIMIT_REACHED') {
+          if (res.headers.get('X-Quota-Scope') === 'paid-pool') {
+            return 'Your pass has run out. Grab an AI Top-Up from your profile to keep going — no need to wait for midnight.'
+          }
           setShowLimitModal(true)
           return 'You\'ve reached your daily AI query limit. Upgrade to premium for more.'
         }

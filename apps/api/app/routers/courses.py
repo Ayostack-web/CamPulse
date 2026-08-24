@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.deps import CurrentUser, get_current_user
-from app.models import Course, Department, Topic, Material, User
+from app.models import College, Course, Department, Topic, Material, University, User
+from app.services.course_scope import course_visibility_filter, level_to_int
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -34,13 +35,25 @@ async def get_my_courses(
     if not u.department_id or not u.current_level:
         return []
 
-    level = int(u.current_level.replace("L", "")) if u.current_level else 1
+    program_type = None
+    if u.university_id:
+        university = await db.get(University, u.university_id)
+        program_type = university.program_type if university else None
+    level = level_to_int(u.current_level, program_type)
+
+    visibility = course_visibility_filter(u.university_id)
+    scope_conditions = [Course.department_id == u.department_id]
+    if visibility is not None:
+        scope_conditions.append(and_(Course.is_general == True, visibility))  # noqa: E712
+    else:
+        scope_conditions.append(Course.is_general == True)  # noqa: E712
 
     result = await db.execute(
-        select(Course).where(
-            (Course.department_id == u.department_id) | (Course.is_general == True),
-            Course.level <= level,
-        ).order_by(Course.code)
+        select(Course)
+        .join(Department, Department.id == Course.department_id, isouter=True)
+        .join(College, College.id == Department.college_id, isouter=True)
+        .where(or_(*scope_conditions), Course.level <= level)
+        .order_by(Course.code)
     )
     courses = result.scalars().all()
 

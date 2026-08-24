@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
@@ -70,6 +71,22 @@ def _prompt_cache_set(key: str, value: str) -> None:
         pass
 
 
+def _track_model_call(model_id: str) -> None:
+    """Best-effort daily per-model call counter in Redis for spend attribution."""
+    client = _get_prompt_cache_client()
+    if not client:
+        return
+    try:
+        day = datetime.now(timezone.utc).strftime("%Y%m%d")
+        key = f"vylix:metrics:model_calls:{day}:{model_id}"
+        pipeline = client.pipeline()
+        pipeline.incr(key)
+        pipeline.expire(key, 2592000)
+        pipeline.execute()
+    except Exception:
+        pass
+
+
 def _get_client() -> genai.Client:
     global _client
     if _client is None:
@@ -133,11 +150,60 @@ def get_student_weakness_metrics(user_id: str) -> str:
 # ── Stage 2: Researcher ─────────────────────────────────────────────────
 
 
-def search_course_vector_chunks(course_code: str, query: str) -> str:
+def resolve_course_context(
+    course_code: str, university_id: str | None = None
+) -> tuple[str | None, str | None]:
+    """Resolve a course code to (course_id, university_id) for retrieval scoping.
+
+    When ``university_id`` is given, the caller's own institution's row wins
+    over shared legacy rows and other institutions' rows are ignored.
+    """
+    query = """
+        SELECT
+            c.id AS course_id,
+            COALESCE(col.university_id, c.university_id) AS university_id
+        FROM courses c
+        LEFT JOIN departments d ON d.id = c.department_id
+        LEFT JOIN colleges col ON col.id = d.college_id
+        WHERE LOWER(c.code) = LOWER(%(code)s)
+        ORDER BY CASE
+            WHEN %(uni)s::uuid IS NULL THEN 0
+            WHEN COALESCE(col.university_id, c.university_id) = %(uni)s::uuid THEN 0
+            WHEN COALESCE(col.university_id, c.university_id) IS NULL THEN 1
+            ELSE 2
+        END
+        LIMIT 1
+    """
+    try:
+        with get_connection() as conn, conn.cursor() as cursor:
+            cursor.execute(query, {"code": course_code, "uni": university_id})
+            row = cursor.fetchone()
+    except psycopg.Error:
+        logger.exception("Course resolution failed for %s", course_code)
+        return None, None
+    if not row:
+        return None, None
+    effective_university = (
+        str(row["university_id"]) if row["university_id"] else None
+    )
+    if (
+        university_id
+        and effective_university
+        and effective_university != university_id
+    ):
+        return None, None
+    return str(row["course_id"]), effective_university
+
+
+def search_course_vector_chunks(
+    course_code: str,
+    query: str,
+    course_id: str | None = None,
+) -> str:
     try:
         store = _get_vector_store()
         enriched = f"[{course_code}] {query}"
-        results = store.query(enriched, top_k=5)
+        results = store.query(enriched, top_k=5, course_id=course_id)
     except Exception:
         logger.exception("Vector search failed for course %s", course_code)
         return ""
@@ -159,6 +225,7 @@ def run_vylix_academic_agent(
     course_code: str,
     user_prompt: str,
     task_tier: str = "standard",
+    course_id: str | None = None,
 ) -> str:
     logger.info(
         "Agent start user=%s course=%s tier=%s",
@@ -168,9 +235,30 @@ def run_vylix_academic_agent(
     )
 
     weakness = get_student_weakness_metrics(user_id)
-    material = search_course_vector_chunks(course_code, user_prompt)
 
-    model_id = PRO_MODEL if task_tier == "complex" else FLASH_MODEL
+    if course_id is None:
+        course_id, _university_id = resolve_course_context(course_code)
+    if course_id is None:
+        logger.warning(
+            "Agent could not resolve course %r; skipping material retrieval",
+            course_code,
+        )
+        material = "No relevant course material found."
+    else:
+        material = search_course_vector_chunks(
+            course_code, user_prompt, course_id=course_id
+        )
+
+    tier = "complex" if task_tier == "complex" else "standard"
+    if tier == "complex" and not settings.pro_tier_enabled:
+        logger.warning(
+            "Pro tier disabled by config; downgrading to Flash user=%s course=%s",
+            user_id,
+            course_code,
+        )
+        tier = "standard"
+
+    model_id = PRO_MODEL if tier == "complex" else FLASH_MODEL
 
     system = (
         "You are the Vylix Autonomous Academic Coach - a private tutor. "
@@ -193,7 +281,25 @@ def run_vylix_academic_agent(
             course_code,
             task_tier,
         )
+        from app.services.usage_log import record_ai_usage
+
+        record_ai_usage(
+            model=model_id,
+            feature="study_agent",
+            user_id=user_id,
+            task_tier=tier,
+            dedup_hit=True,
+        )
         return cached
+
+    if tier == "complex":
+        logger.warning(
+            "agent_pro_call user=%s course=%s prompt_chars=%d",
+            user_id,
+            course_code,
+            len(prompt),
+        )
+    _track_model_call(model_id)
 
     client = _get_client()
 
@@ -232,6 +338,17 @@ def run_vylix_academic_agent(
             completion_tokens,
             prompt_tokens + completion_tokens,
             cost,
+        )
+        from app.services.usage_log import record_ai_usage
+
+        record_ai_usage(
+            model=model_id,
+            feature="study_agent",
+            user_id=user_id,
+            task_tier=tier,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            est_cost_usd=cost,
         )
     except Exception:
         logger.warning("Failed to parse Gemini SDK usage metadata", exc_info=True)

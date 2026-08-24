@@ -84,12 +84,6 @@ async def daily_digest(
     new_notifications = notif_result.scalar() or 0
 
     two_days_ago = now - timedelta(days=2)
-    recent_materials = await db.execute(
-        select(Material.topic_id, func.count(Material.id).label("cnt"))
-        .where(Material.uploaded_at >= two_days_ago)
-        .group_by(Material.topic_id)
-    )
-    material_counts = {tid: cnt for tid, cnt in recent_materials.all()}
 
     recent_questions_q = await db.execute(
         select(TopicQuestion, Course.code, Course.title)
@@ -119,29 +113,47 @@ async def daily_digest(
     )
     user_course_ids = {cid: (cc, ct) for cid, cc, ct in user_courses_q.all()}
 
-    courses_with_activity = []
-    for cid, (cc, ct) in user_course_ids.items():
-        topic_ids_q = await db.execute(
-            select(Topic.id).where(Topic.course_id == cid)
+    # Grouped aggregates per course — constant query count regardless of how
+    # many courses the user has (the previous loop ran 3 queries per course).
+    course_ids = list(user_course_ids.keys())
+    new_materials_by_course: dict[str, int] = {}
+    new_questions_by_course: dict[str, int] = {}
+    classmates_by_course: dict[str, int] = {}
+
+    if course_ids:
+        new_mat_q = await db.execute(
+            select(Topic.course_id, func.count(Material.id))
+            .join(Material, Material.topic_id == Topic.id)
+            .where(Topic.course_id.in_(course_ids))
+            .where(Material.uploaded_at >= two_days_ago)
+            .group_by(Topic.course_id)
         )
-        topic_ids = [tid for (tid,) in topic_ids_q.all()]
+        new_materials_by_course = {cid: cnt for cid, cnt in new_mat_q.all()}
 
-        new_mat = sum(material_counts.get(tid, 0) for tid in topic_ids)
-
-        q_count_result = await db.execute(
-            select(func.count()).select_from(TopicQuestion)
-            .where(TopicQuestion.topic_id.in_(topic_ids))
+        new_qs_q = await db.execute(
+            select(Topic.course_id, func.count(TopicQuestion.id))
+            .join(TopicQuestion, TopicQuestion.topic_id == Topic.id)
+            .where(Topic.course_id.in_(course_ids))
             .where(TopicQuestion.created_at >= two_days_ago)
+            .group_by(Topic.course_id)
         )
-        new_qs = q_count_result.scalar() or 0
+        new_questions_by_course = {cid: cnt for cid, cnt in new_qs_q.all()}
 
-        active_result = await db.execute(
-            select(func.count(func.distinct(Material.uploader_id)))
-            .where(Material.topic_id.in_(topic_ids))
+        classmates_q = await db.execute(
+            select(Topic.course_id, func.count(func.distinct(Material.uploader_id)))
+            .join(Material, Material.topic_id == Topic.id)
+            .where(Topic.course_id.in_(course_ids))
             .where(Material.uploaded_at >= two_days_ago)
             .where(Material.uploader_id != user.id)
+            .group_by(Topic.course_id)
         )
-        active_classmates = active_result.scalar() or 0
+        classmates_by_course = {cid: cnt for cid, cnt in classmates_q.all()}
+
+    courses_with_activity = []
+    for cid, (cc, ct) in user_course_ids.items():
+        new_mat = new_materials_by_course.get(cid, 0)
+        new_qs = new_questions_by_course.get(cid, 0)
+        active_classmates = classmates_by_course.get(cid, 0)
 
         if new_mat > 0 or new_qs > 0:
             courses_with_activity.append(CourseActivity(

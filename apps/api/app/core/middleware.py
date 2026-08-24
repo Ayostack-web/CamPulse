@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import Request
@@ -16,6 +18,27 @@ settings = get_settings()
 
 _ACTIVITY_PATHS = {"/api/v1/"}
 _ACTIVITY_EXCLUDE = {"/api/v1/health", "/api/v1/ws"}
+
+# Throttle last-active writes: one UPDATE per user per interval, max.
+# Per-process state — worst case across N replicas is N writes per interval,
+# which the pooled async engine absorbs without connection churn.
+_ACTIVITY_WRITE_INTERVAL_SECONDS = 300
+_MAX_THROTTLE_ENTRIES = 50_000
+_last_activity_write: dict[str, float] = {}
+
+
+def _should_throttle_write(user_id: str) -> bool:
+    now = time.monotonic()
+    last = _last_activity_write.get(user_id)
+    if last is not None and now - last < _ACTIVITY_WRITE_INTERVAL_SECONDS:
+        return True
+    if len(_last_activity_write) > _MAX_THROTTLE_ENTRIES:
+        cutoff = now - _ACTIVITY_WRITE_INTERVAL_SECONDS
+        for uid, ts in list(_last_activity_write.items()):
+            if ts < cutoff:
+                del _last_activity_write[uid]
+    _last_activity_write[user_id] = now
+    return False
 
 
 async def _extract_user_id(request: Request) -> str | None:
@@ -47,20 +70,27 @@ class ActivityTrackingMiddleware(BaseHTTPMiddleware):
             set_current_user_id(None)
 
         if user_id and _should_track(request.url.path, request.method):
-            self._update_last_active(user_id)
+            if not _should_throttle_write(user_id):
+                # Fire-and-forget through the pooled async engine — never
+                # blocks the response and no longer opens a raw psycopg
+                # connection per request.
+                asyncio.create_task(self._update_last_active(user_id))
 
         return response
 
-    def _update_last_active(self, user_id: str) -> None:
+    @staticmethod
+    async def _update_last_active(user_id: str) -> None:
         try:
-            from app.core.postgres import get_connection
+            from sqlalchemy import text
 
-            with get_connection() as conn, conn.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE users SET last_active_at = NOW() WHERE id = %s",
-                    (user_id,),
+            from app.database import async_session
+
+            async with async_session() as db:
+                await db.execute(
+                    text("UPDATE users SET last_active_at = NOW() WHERE id = :uid"),
+                    {"uid": user_id},
                 )
-                conn.commit()
+                await db.commit()
         except Exception as e:
             logger.debug("Activity tracking skipped: %s", e)
 

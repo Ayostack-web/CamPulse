@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+import unicodedata
 from typing import Any
 
 from app.core.postgres import get_connection
@@ -26,10 +28,44 @@ logger = logging.getLogger(__name__)
 SOLVE_MODEL = "gemini-flash-lite-latest"
 MAX_EXTRACT_CHARS = 30000
 
+# OCR glyph variants mapped to their canonical ASCII form before hashing.
+_OCR_CHAR_MAP = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u00d7": "x",
+        "\u00f7": "/",
+        "\u2026": "...",
+    }
+)
+
+# Kept in the fingerprint: alphanumerics plus math operators, so "2 + 2"
+# never collapses into "22". Decimal points are protected separately below.
+_HASH_STRIP_RE = re.compile(r"[^a-z0-9+*/=<>:.-]+")
+# Dots are only kept when sandwiched between digits (a decimal point);
+# sentence/trailing periods are OCR noise and get stripped.
+_DECIMAL_DOT_RE = re.compile(r"\.(?!\d)|(?<!\d)\.")
+
 
 def question_hash(text: str) -> str:
-    """Content fingerprint used for deduplication across papers and schools."""
-    normalized = " ".join(text.strip().lower().split())
+    """Content fingerprint used for deduplication across papers and schools.
+
+    Normalizes case, whitespace and unicode look-alikes (NFKC), maps common
+    OCR punctuation variants (smart quotes, dashes) to their canonical form,
+    then strips non-semantic punctuation. Math operators and decimal points
+    are preserved so numerically distinct questions never merge.
+    """
+    normalized = unicodedata.normalize("NFKC", text).translate(_OCR_CHAR_MAP)
+    normalized = _DECIMAL_DOT_RE.sub("", normalized.lower())
+    normalized = _HASH_STRIP_RE.sub("", normalized)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
@@ -70,7 +106,7 @@ def extract_questions(text: str, user_id: str | None = None) -> list[dict[str, A
         "If a question is unclear, include it as written. No markdown, no code fences."
     )
     prompt = f"Exam paper:\n{text[:MAX_EXTRACT_CHARS]}\n\nExtract every exam question as JSON."
-    result = gemini.call(prompt, system_instruction=system, user_id=user_id)
+    result = gemini.call(prompt, system_instruction=system, user_id=user_id, feature="solved_bank_extract")
     if not result:
         return []
     parsed = _parse_json(result)
@@ -98,7 +134,10 @@ def solve_question(
     )
     prompt = f"Question: {question}\n\nSolve it."
     usage: list[tuple[int, int]] = []
-    result = gemini.call(prompt, system_instruction=system, user_id=user_id, usage=usage)
+    result = gemini.call(
+        prompt, system_instruction=system, user_id=user_id, usage=usage,
+        feature="solved_bank_solve",
+    )
     if not result:
         return {"answer": "", "explanation": "", "mistake": ""}, 0.0
 

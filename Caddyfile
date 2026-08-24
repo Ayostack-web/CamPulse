@@ -1,5 +1,20 @@
+# Round-robin across api replicas (docker compose --scale api=N).
+# `dynamic a` re-resolves the compose DNS name on an interval so replicas
+# joining/leaving are picked up without reloading Caddy. Events fan out via
+# Redis pub/sub, so no sticky sessions are required.
 api.vylix.app {
-    reverse_proxy api:4000
+    reverse_proxy {
+        dynamic a {
+            name api
+            port 4000
+            refresh 5s
+            versions ipv4
+        }
+        lb_policy least_conn
+        health_uri /health/live
+        health_interval 10s
+        health_timeout 3s
+    }
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -13,9 +28,16 @@ api.vylix.app {
     }
 }
 
-# WebSocket endpoint
+# WebSocket endpoint (same replica pool; long-lived connections)
 api.vylix.app/pulse {
-    reverse_proxy api:4000 {
+    reverse_proxy {
+        dynamic a {
+            name api
+            port 4000
+            refresh 5s
+            versions ipv4
+        }
+        lb_policy least_conn
         header_up Host {host}
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}

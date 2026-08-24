@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
+import { openMaterialPdf, removeCachedPdf } from '@/lib/pdf-cache';
 import { useAuth } from '@/context/auth-context';
 import { UploadMaterialModal } from '@/components/dashboard/UploadMaterialModal';
 
@@ -102,6 +103,7 @@ export function PastQuestionsView() {
       if (id === null) return;
       queryClient.invalidateQueries({ queryKey: ['past-questions'] });
       queryClient.invalidateQueries({ queryKey: ['vault-materials'] });
+      void removeCachedPdf(id).catch(() => {});
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : 'Failed to delete material');
@@ -110,26 +112,11 @@ export function PastQuestionsView() {
 
   const openFile = useCallback(async (id: string, title: string) => {
     try {
-      const supabase = getSupabaseBrowserClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {};
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`;
-      }
-      const res = await fetch(`/api/materials/${id}/file`, { headers });
-      if (!res.ok) throw new Error('Failed to get file');
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      setViewerUrl(blobUrl);
+      const url = await openMaterialPdf(id);
+      setViewerUrl(url);
       setViewerTitle(title);
     } catch { toast.error('Failed to open file'); }
   }, []);
-
-  useEffect(() => {
-    return () => {
-      if (viewerUrl?.startsWith('blob:')) URL.revokeObjectURL(viewerUrl);
-    };
-  }, [viewerUrl]);
 
   return (
     <section className="space-y-5 sm:space-y-8">

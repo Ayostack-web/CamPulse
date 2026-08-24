@@ -202,7 +202,9 @@ def update_active_counts() -> str:
     """Update a simple Redis counter for active users (used by social presence)."""
     try:
         import redis
-        r = redis.from_url(settings.celery_broker_url)
+        # NOTE: must be the Redis URL (settings.redis_url, DB 0) — not the
+        # broker/backend URLs, which use separate logical DBs.
+        r = redis.from_url(settings.redis_url)
         five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         with get_connection() as conn, conn.cursor() as cursor:
             cursor.execute(

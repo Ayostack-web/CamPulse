@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import abc
 from pathlib import Path
+from typing import BinaryIO, Union
 
 from app.core.config import get_settings
 
 settings = get_settings()
 
+# Providers accept fully-buffered bytes or an open binary file-like object
+# (e.g. a spooled temp file); httpx streams file-likes without buffering.
+UploadData = Union[bytes, BinaryIO]
+
 
 class StorageProvider(abc.ABC):
     @abc.abstractmethod
-    async def upload(self, bucket: str, path: str, data: bytes, content_type: str) -> str:
+    async def upload(self, bucket: str, path: str, data: UploadData, content_type: str) -> str:
         """Upload file and return public URL."""
 
     @abc.abstractmethod
@@ -38,7 +43,7 @@ class SupabaseStorage(StorageProvider):
             "Authorization": f"Bearer {self.key}",
         }
 
-    async def upload(self, bucket: str, path: str, data: bytes, content_type: str) -> str:
+    async def upload(self, bucket: str, path: str, data: UploadData, content_type: str) -> str:
         import httpx
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -94,7 +99,7 @@ class AppwriteStorage(StorageProvider):
             "Content-Type": "multipart/form-data",
         }
 
-    async def upload(self, bucket: str, path: str, data: bytes, content_type: str) -> str:
+    async def upload(self, bucket: str, path: str, data: UploadData, content_type: str) -> str:
         import httpx
         files = {"file": (Path(path).name, data, content_type)}
         data_fields = {"fileId": "unique()", "permissions[0]": 'read("any")'}

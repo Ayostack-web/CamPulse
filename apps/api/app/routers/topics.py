@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ class TopicOut(BaseModel):
 @router.get("/course/{course_id}", response_model=list[TopicOut])
 async def list_topics_for_course(
     course_id: str,
+    limit: int = Query(default=100, ge=1, le=300),
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -39,5 +40,6 @@ async def list_topics_for_course(
         select(Topic)
         .where(Topic.course_id == course_id, Topic.is_active == True)
         .order_by(Topic.last_activity.desc())
+        .limit(limit)
     )
     return result.scalars().all()

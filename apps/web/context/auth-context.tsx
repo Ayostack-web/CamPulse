@@ -19,6 +19,7 @@ interface User {
   graduatedAt?: string;
   collegeId?: string;
   collegeName?: string;
+  programType?: string;
   departmentCode?: string;
   departmentName?: string;
 }
@@ -76,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 graduatedAt: profile.graduatedAt,
                 collegeId: profile.college_id,
                 collegeName: profile.college_name,
+                programType: profile.program_type,
                 departmentCode: profile.department_code,
                 departmentName: profile.department_name,
               }

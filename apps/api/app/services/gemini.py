@@ -96,11 +96,13 @@ def _call(
     system_instruction: str | None = None,
     user_id: str | None = None,
     usage: list | None = None,
+    feature: str = "unattributed",
 ) -> str | None:
     """Call Gemini Flash-Lite and return the generated text.
 
     When ``usage`` is provided (a list), it receives a
     ``(prompt_tokens, completion_tokens)`` tuple so callers can track cost.
+    ``feature`` labels the calling surface in the ai_usage table.
     """
     settings = get_settings()
     if not settings.gemini_api_key:
@@ -160,13 +162,24 @@ def _call(
             usage.append((prompt_tokens, completion_tokens))
         cost = estimate_cost(MODEL_NAME, prompt_tokens, completion_tokens)
         logger.info(
-            "gemini_usage model=%s user=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d cost_usd=%.6f",
+            "gemini_usage model=%s user=%s feature=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d cost_usd=%.6f",
             MODEL_NAME,
             user_id or "-",
+            feature,
             prompt_tokens,
             completion_tokens,
             total_tokens,
             cost,
+        )
+        from app.services.usage_log import record_ai_usage
+
+        record_ai_usage(
+            model=MODEL_NAME,
+            feature=feature,
+            user_id=user_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            est_cost_usd=cost,
         )
     except Exception:
         logger.warning("Failed to parse Gemini usage metadata", exc_info=True)
@@ -198,7 +211,7 @@ def generate_insights(
     )
 
     try:
-        result = _call(prompt, system_instruction=system, user_id=user_id)
+        result = _call(prompt, system_instruction=system, user_id=user_id, feature="insights")
     except GeminiError as exc:
         logger.error("Insights generation failed: %s", exc)
         return None
@@ -218,7 +231,7 @@ def generate_insights(
         return None
 
 
-def chat(query: str, context: str, user_id: str | None = None) -> str | None:
+def chat(query: str, context: str, user_id: str | None = None, feature: str = "document_chat") -> str | None:
     system = (
         "You are a study assistant helping a university student understand their course material. "
         "Answer the student's question based ONLY on the provided document context. "
@@ -230,7 +243,7 @@ def chat(query: str, context: str, user_id: str | None = None) -> str | None:
         f"Student question: {query}\n\n"
         "Answer:"
     )
-    return _call(prompt, system_instruction=system, user_id=user_id)
+    return _call(prompt, system_instruction=system, user_id=user_id, feature=feature)
 
 
 def general_chat(conversation: str, user_id: str | None = None) -> str | None:
@@ -242,7 +255,7 @@ def general_chat(conversation: str, user_id: str | None = None) -> str | None:
         "You can help with any academic question — math, science, humanities, study strategies, etc."
     )
     prompt = f"Conversation:\n{conversation}\n\nAssistant:"
-    return _call(prompt, system_instruction=system, user_id=user_id)
+    return _call(prompt, system_instruction=system, user_id=user_id, feature="general_chat")
 
 
 def call(
@@ -250,15 +263,18 @@ def call(
     system_instruction: str | None = None,
     user_id: str | None = None,
     usage: list | None = None,
+    feature: str = "unattributed",
 ) -> str | None:
     """Public wrapper around the Flash-Lite call for feature services.
 
     ``usage`` is an optional list that receives a ``(prompt_tokens,
     completion_tokens)`` tuple so callers can track per-call cost.
+    ``feature`` labels the calling surface in the ai_usage table.
     """
     return _call(
         prompt,
         system_instruction=system_instruction,
         user_id=user_id,
         usage=usage,
+        feature=feature,
     )

@@ -19,6 +19,10 @@ from app.models import (
     PointsTransaction, University, Department, Subscription, Referral,
 )
 from app.schemas import StreakWithPointsOut
+from app.services import points as points_service
+from app.services.points import (
+    REFERRER_REWARD, REFEREE_REWARD, REFERRAL_INVITER_REASONS,
+)
 from app.services.storage import get_storage
 
 settings = get_settings()
@@ -29,8 +33,6 @@ logger = logging.getLogger(__name__)
 ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"}
 MAX_AVATAR_MB = 5
 
-REFERRER_REWARD = 100
-REFEREE_REWARD = 50
 REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
@@ -53,6 +55,7 @@ class UserProfileOut(BaseModel):
     college_name: str | None = None
     department_name: str | None = None
     department_code: str | None = None
+    program_type: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -84,10 +87,12 @@ async def get_profile(
     college_name = None
     department_name = None
     department_code = None
+    program_type = None
     if u.university_id:
         university = await db.get(University, u.university_id)
         if university:
             college_name = university.name
+            program_type = university.program_type
     if u.department_id:
         dept = await db.get(Department, u.department_id)
         if dept:
@@ -104,7 +109,7 @@ async def get_profile(
         school_email_prompt_dismissed_at=str(u.school_email_prompt_dismissed_at) if u.school_email_prompt_dismissed_at else None,
         created_at=str(u.created_at) if u.created_at else None,
         college_name=college_name, department_name=department_name,
-        department_code=department_code,
+        department_code=department_code, program_type=program_type,
     )
 
 
@@ -430,7 +435,7 @@ async def get_referral_code(
         select(func.coalesce(func.sum(PointsTransaction.amount), 0))
         .where(
             PointsTransaction.user_id == user.id,
-            PointsTransaction.reason == "referral_bonus",
+            PointsTransaction.reason.in_(REFERRAL_INVITER_REASONS),
         )
     )
     return ReferralCodeOut(
@@ -490,6 +495,16 @@ async def claim_referral(
     if not referrer:
         raise HTTPException(status_code=400, detail="Invalid referral code")
 
+    invite_count = await db.execute(
+        select(func.count()).select_from(Referral).where(Referral.referrer_id == referrer.id)
+    )
+    if invite_count.scalar_one() >= settings.max_referees_per_referrer:
+        raise HTTPException(
+            status_code=400,
+            detail="This invite code has reached its limit of "
+                   f"{settings.max_referees_per_referrer} people",
+        )
+
     already = await db.execute(
         select(Referral.id).where(Referral.referee_id == user.id)
     )
@@ -497,20 +512,17 @@ async def claim_referral(
         raise HTTPException(status_code=400, detail="You've already used a referral code")
 
     db.add(Referral(referrer_id=referrer.id, referee_id=user.id))
-    referrer.contribution_score += REFERRER_REWARD
-    user.user.contribution_score += REFEREE_REWARD
-    db.add(PointsTransaction(
-        user_id=referrer.id, amount=REFERRER_REWARD,
-        reason="referral_bonus",
-        description="A friend joined Vylix with your invite",
-    ))
-    db.add(PointsTransaction(
-        user_id=user.id, amount=REFEREE_REWARD,
-        reason="referral_bonus",
+
+    # The joiner gets their welcome points now; the inviter is paid once the
+    # invitee spends a first AI query (see services.points.maybe_activate_referral)
+    # so rewards track activated users, not raw signups.
+    awarded = await points_service.award(
+        db, user.id, REFEREE_REWARD,
+        points_service.REASON_REFERRAL_WELCOME,
         description="You joined Vylix through a friend's invite",
-    ))
+    )
     await db.flush()
     return ReferralClaimOut(
         message="Referral applied",
-        points_earned=REFEREE_REWARD,
+        points_earned=awarded,
     )

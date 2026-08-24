@@ -31,23 +31,14 @@ const pwaConfig = withPWA({
   disable: process.env.NODE_ENV === 'development',
   runtimeCaching: [
     {
+      // Never cache API responses in the service worker:
+      // material file endpoints return short-lived signed URLs, and the PDF
+      // bytes themselves are cached in IndexedDB by lib/pdf-cache.ts.
       urlPattern: /\/api\//,
       handler: 'NetworkOnly',
       method: 'GET',
       options: {
         cacheName: 'api-cache',
-      },
-    },
-    {
-      urlPattern: /\/api\/materials\/[^/]+\/file/,
-      handler: 'CacheFirst',
-      method: 'GET',
-      options: {
-        cacheName: 'vault-files',
-        expiration: {
-          maxEntries: 100,
-          maxAgeSeconds: 60 * 24 * 60 * 60,
-        },
       },
     },
   ],

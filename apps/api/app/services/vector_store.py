@@ -38,6 +38,19 @@ def _vector_literal(vector: list[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in vector) + "]"
 
 
+_SCOPE_SYNC = """
+UPDATE material_chunks mc
+SET course_id = c.id,
+    university_id = col.university_id
+FROM materials m
+JOIN topics t ON t.id = m.topic_id
+JOIN courses c ON c.id = t.course_id
+LEFT JOIN departments d ON d.id = c.department_id
+LEFT JOIN colleges col ON col.id = d.college_id
+WHERE mc.document_id = m.id::text AND mc.document_id = %s
+"""
+
+
 class PgVectorBackend:
     """pgvector-backed chunk store used for real semantic search."""
 
@@ -67,15 +80,30 @@ class PgVectorBackend:
                 """,
                 rows,
             )
+            if document_id:
+                cursor.execute(_SCOPE_SYNC, (document_id,))
+                if cursor.rowcount == 0:
+                    logger.warning(
+                        "Chunks for document %s have no course scope (no matching "
+                        "material row); they will be invisible to institution-scoped "
+                        "retrieval.",
+                        document_id,
+                    )
             conn.commit()
         return len(rows)
 
-    def query(self, text: str, top_k: int = 5) -> list[SearchResult]:
+    def query(
+        self,
+        text: str,
+        top_k: int = 5,
+        course_id: str | None = None,
+        document_id: str | None = None,
+    ) -> list[SearchResult]:
         vector = self.embedding_function.embed_query(text)
         with get_connection() as conn, conn.cursor() as cursor:
             cursor.execute(
-                "SELECT * FROM match_material_chunks(%s::vector, NULL, %s)",
-                (_vector_literal(vector), top_k),
+                "SELECT * FROM match_material_chunks(%s::vector, %s, %s, %s)",
+                (_vector_literal(vector), document_id, top_k, course_id),
             )
             rows = cursor.fetchall()
         results: list[SearchResult] = []
@@ -96,6 +124,19 @@ class PgVectorBackend:
         with get_connection() as conn, conn.cursor() as cursor:
             cursor.execute("DELETE FROM material_chunks WHERE document_id = %s", (document_id,))
             conn.commit()
+
+
+def _chroma_where(
+    course_id: str | None, document_id: str | None
+) -> dict[str, Any] | None:
+    clauses: list[dict[str, Any]] = []
+    if course_id:
+        clauses.append({"course_id": course_id})
+    if document_id:
+        clauses.append({"document_id": document_id})
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
 class VectorStore:
@@ -215,20 +256,35 @@ class VectorStore:
             )
         return len(chunks)
 
-    def query(self, text: str, top_k: int = 5) -> list[SearchResult]:
+    def query(
+        self,
+        text: str,
+        top_k: int = 5,
+        course_id: str | None = None,
+        document_id: str | None = None,
+    ) -> list[SearchResult]:
         if self._pg_backend is not None:
             try:
-                return self._pg_backend.query(text, top_k=top_k)
+                return self._pg_backend.query(
+                    text, top_k=top_k, course_id=course_id, document_id=document_id
+                )
             except Exception:
                 logger.exception("pgvector query failed; falling back to ChromaDB")
-        return self._chroma_query(text, top_k)
+        return self._chroma_query(text, top_k, course_id=course_id, document_id=document_id)
 
-    def _chroma_query(self, text: str, top_k: int) -> list[SearchResult]:
+    def _chroma_query(
+        self,
+        text: str,
+        top_k: int,
+        course_id: str | None = None,
+        document_id: str | None = None,
+    ) -> list[SearchResult]:
         if self._collection is not None:
             result = self._collection.query(
                 query_texts=[text],
                 n_results=top_k,
                 include=["documents", "metadatas", "distances"],
+                where=_chroma_where(course_id, document_id),
             )
             documents = result.get("documents", [[]])[0]
             metadatas = result.get("metadatas", [[]])[0]

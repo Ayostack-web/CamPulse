@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -19,13 +21,15 @@ from app.entitlements import (
 )
 from app.models import User, UserEmail
 from app.security import decode_access_token
+from app.services.points import maybe_activate_referral
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class RateLimiter:
-    """Simple in-memory sliding window rate limiter."""
+    """In-memory sliding window rate limiter (fallback when Redis is unavailable)."""
 
     def __init__(self, max_requests: int = 20, window_seconds: int = 60):
         self.max_requests = max_requests
@@ -44,6 +48,41 @@ class RateLimiter:
 
 ai_rate_limiter = RateLimiter(max_requests=15, window_seconds=60)
 anonymous_ip_limiter = RateLimiter(max_requests=30, window_seconds=60)
+payment_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)
+
+# Redis fixed-window limiter so the limit holds across replicas. Falls back
+# to the per-process limiter above whenever Redis is unreachable.
+_rate_limit_redis: aioredis.Redis | None = None
+
+
+def _get_rate_limit_redis() -> aioredis.Redis:
+    global _rate_limit_redis
+    if _rate_limit_redis is None:
+        _rate_limit_redis = aioredis.from_url(
+            settings.redis_url, decode_responses=True, socket_timeout=1
+        )
+    return _rate_limit_redis
+
+
+async def _redis_rate_limited(
+    key: str, max_requests: int, window_seconds: int
+) -> bool | None:
+    """Fixed-window counter (INCR + EXPIRE) shared across replicas.
+
+    Returns True/False for a verdict, or None when Redis is unavailable so
+    the caller can fall back to the in-process limiter.
+    """
+    try:
+        client = _get_rate_limit_redis()
+        bucket = int(time.time()) // window_seconds
+        rkey = f"rl:{key}:{bucket}"
+        count = await client.incr(rkey)
+        if count == 1:
+            await client.expire(rkey, window_seconds + 1)
+        return count > max_requests
+    except Exception as exc:
+        logger.debug("Redis rate limiter unavailable (%s); using in-memory fallback", exc)
+        return None
 
 
 @dataclass
@@ -92,18 +131,19 @@ async def get_current_user(
     return CurrentUser(id=user.id, email=email, full_name=user.full_name, user=user)
 
 
-async def check_ai_token_quota(
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> CurrentUser:
-    """Resolve and spend one AI query from the user's entitlements.
+async def spend_ai_query(current_user: CurrentUser, db: AsyncSession) -> None:
+    """Spend one AI query from the user's entitlements.
 
     Order of preference:
       1. A paid pass with remaining capacity (atomic spend — hard cap).
-      2. The free daily counter (3/day, 10 on the first day).
+      2. The free daily counter (5/day, 10 on the first day).
 
     A user who holds paid passes but has exhausted all of them gets a hard
     stop — they need a Top-Up, not a fresh free daily reset.
+
+    Callable mid-handler for endpoints that should only charge once they
+    know an AI call will actually happen (e.g. document chat skips the
+    charge when retrieval finds nothing).
     """
     u = current_user.user
     now = datetime.now(timezone.utc)
@@ -113,10 +153,11 @@ async def check_ai_token_quota(
             raise HTTPException(
                 status_code=429,
                 detail="DAILY_LIMIT_REACHED",
-                headers={"X-Tokens-Reset": "midnight"},
+                headers={"X-Tokens-Reset": "midnight", "X-Quota-Scope": "paid-pool"},
             )
+        await maybe_activate_referral(db, u.id)
         await db.flush()
-        return current_user
+        return
 
     today = now.date()
     if u.daily_tokens_reset_at is None or u.daily_tokens_reset_at.date() < today:
@@ -128,13 +169,21 @@ async def check_ai_token_quota(
         raise HTTPException(
             status_code=429,
             detail="DAILY_LIMIT_REACHED",
-            headers={"X-Tokens-Reset": "midnight"},
+            headers={"X-Tokens-Reset": "midnight", "X-Quota-Scope": "free-daily"},
         )
 
     u.daily_tokens_used += 1
     u.daily_tokens_reset_at = now
+    await maybe_activate_referral(db, u.id)
     await db.flush()
 
+
+async def check_ai_token_quota(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CurrentUser:
+    """FastAPI dependency: authenticate then spend one AI query up front."""
+    await spend_ai_query(current_user, db)
     return current_user
 
 
@@ -150,7 +199,7 @@ async def get_optional_user(
         return None
 
 
-def check_ai_rate_limit(
+async def check_ai_rate_limit(
     request: Request,
     user: CurrentUser | None = Depends(get_optional_user),
 ) -> None:
@@ -158,7 +207,9 @@ def check_ai_rate_limit(
 
     Keyed by user ID for authenticated students so a whole class sharing one
     campus NAT/IP never shares a single bucket. Anonymous traffic falls back
-    to a per-IP guard; Gemini's own ~15 RPM model cap still bounds real spend.
+    to a per-IP guard. Counting lives in Redis so the limit survives
+    horizontal scaling; if Redis is down, the per-process sliding window
+    still bounds abuse.
     """
     if user is not None:
         key = f"ai:user:{user.id}"
@@ -167,11 +218,36 @@ def check_ai_rate_limit(
         key = f"ai:ip:{request.client.host if request.client else 'unknown'}"
         limiter = anonymous_ip_limiter
 
-    if limiter.is_rate_limited(key):
+    limited = await _redis_rate_limited(key, limiter.max_requests, limiter.window_seconds)
+    if limited is None:
+        limited = limiter.is_rate_limited(key)
+    if limited:
         raise HTTPException(
             status_code=429,
             detail="Too many requests. Please wait a moment before trying again.",
         )
+
+
+async def check_payment_rate_limit(
+    user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Burst guard on payment endpoints — each verify call hits Paystack's API.
+
+    Keyed by user ID in Redis so the limit holds across replicas; falls back
+    to the per-process limiter when Redis is unreachable.
+    """
+    key = f"pay:user:{user.id}"
+    limited = await _redis_rate_limited(
+        key, payment_rate_limiter.max_requests, payment_rate_limiter.window_seconds
+    )
+    if limited is None:
+        limited = payment_rate_limiter.is_rate_limited(key)
+    if limited:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please wait a moment before trying again.",
+        )
+    return user
 
 
 async def verify_maintenance_key(request: Request) -> str:

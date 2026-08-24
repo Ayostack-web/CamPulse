@@ -6,9 +6,18 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import check_ai_rate_limit, check_ai_token_quota, get_optional_user, CurrentUser
+from app.database import get_db
+from app.deps import (
+    CurrentUser,
+    check_ai_rate_limit,
+    check_ai_token_quota,
+    get_current_user,
+    spend_ai_query,
+)
 from app.services.pdf import compress_pdf
 from app.services.ocr import extract_text_with_tesseract
 from app.services.ingestion import ingest_document, search_documents
@@ -20,6 +29,19 @@ from app.services.vector_store import VectorStore
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+_STREAM_CHUNK = 1024 * 1024
+
+
+async def _stream_upload_to_temp(file: UploadFile, suffix: str) -> Path:
+    """Copy an upload to a temp file in chunks (never buffers the whole body)."""
+    with NamedTemporaryFile(delete=False, suffix=suffix) as out:
+        while True:
+            chunk = await file.read(_STREAM_CHUNK)
+            if not chunk:
+                break
+            await run_in_threadpool(out.write, chunk)
+        return Path(out.name)
 
 
 class CompressResponse(BaseModel):
@@ -72,9 +94,7 @@ class ParseResponse(BaseModel):
 async def compress_document(file: UploadFile = File(...)) -> CompressResponse:
     suffix = Path(file.filename or "document.pdf").suffix or ".pdf"
 
-    with NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
-        source_file.write(await file.read())
-        source_path = Path(source_file.name)
+    source_path = await _stream_upload_to_temp(file, suffix)
 
     compressed_path = compress_pdf(source_path)
     return CompressResponse(
@@ -89,9 +109,7 @@ async def compress_document(file: UploadFile = File(...)) -> CompressResponse:
 async def parse_document(file: UploadFile = File(...)) -> ParseResponse:
     suffix = Path(file.filename or "document.pdf").suffix.lower() or ".pdf"
 
-    with NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
-        source_file.write(await file.read())
-        source_path = Path(source_file.name)
+    source_path = await _stream_upload_to_temp(file, suffix)
 
     try:
         parsed_document = parse_with_docling(
@@ -120,9 +138,7 @@ async def ingest_uploaded_document(
 ) -> IngestResponse:
     suffix = Path(file.filename or "document.pdf").suffix or ".pdf"
 
-    with NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
-        source_file.write(await file.read())
-        source_path = Path(source_file.name)
+    source_path = await _stream_upload_to_temp(file, suffix)
 
     try:
         result = ingest_document(source_path, department_code=department_code)
@@ -165,9 +181,7 @@ async def search_document_chunks(query: str, top_k: int = 5) -> SearchResponse:
 async def ocr_document(file: UploadFile = File(...)) -> OcrResponse:
     suffix = Path(file.filename or "image.png").suffix or ".png"
 
-    with NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
-        source_file.write(await file.read())
-        source_path = Path(source_file.name)
+    source_path = await _stream_upload_to_temp(file, suffix)
 
     try:
         extracted_text = extract_text_with_tesseract(source_path)
@@ -197,28 +211,37 @@ _vector_store_for_chat = VectorStore()
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_document(
     payload: ChatRequest,
-    _user: CurrentUser = Depends(get_optional_user),
     _rate_limit: None = Depends(check_ai_rate_limit),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> ChatResponse:
-    results = _vector_store_for_chat.query(payload.query, top_k=3)
+    # Vector search is sync (psycopg/pgvector) — keep it off the event loop.
+    results = await run_in_threadpool(
+        _vector_store_for_chat.query,
+        payload.query,
+        top_k=3,
+        document_id=payload.document_id,
+    )
 
-    document_results = [r for r in results if r.document_id == payload.document_id]
-
-    relevant_results = document_results if document_results else results
-
-    if not relevant_results:
+    if not results:
         return ChatResponse(
             answer="I couldn't find relevant content in this document to answer your question. Try rephrasing or asking about a different topic.",
             context_chunks=[],
             follow_up_questions=[],
         )
 
-    best = relevant_results[0]
-    context_chunks = [r.text for r in relevant_results]
+    best = results[0]
+    context_chunks = [r.text for r in results]
+
+    # Retrieval found something and Gemini will be invoked — only now spend
+    # the query so a miss doesn't burn the user's quota.
+    await spend_ai_query(user, db)
 
     context_text = "\n\n".join(context_chunks)
     try:
-        ai_answer = gemini_chat(payload.query, context_text, user_id=_user.id if _user else None)
+        ai_answer = await run_in_threadpool(
+            gemini_chat, payload.query, context_text, user_id=user.id
+        )
     except GeminiError as exc:
         status_code, detail = error_response(exc)
         raise HTTPException(status_code=status_code, detail=detail)
@@ -272,8 +295,8 @@ class GeneralChatResponse(BaseModel):
 @router.post("/general-chat", response_model=GeneralChatResponse)
 async def general_chat_endpoint(
     payload: GeneralChatRequest,
-    _user: CurrentUser = Depends(get_optional_user),
     _rate_limit: None = Depends(check_ai_rate_limit),
+    user: CurrentUser = Depends(check_ai_token_quota),
 ) -> GeneralChatResponse:
     history_text = "\n".join(
         f"{'Student' if m.role == 'user' else 'Assistant'}: {m.content}"
@@ -281,7 +304,7 @@ async def general_chat_endpoint(
     )
 
     try:
-        answer = general_chat(history_text, user_id=_user.id if _user else None)
+        answer = await run_in_threadpool(general_chat, history_text, user_id=user.id)
     except GeminiError as exc:
         status_code, detail = error_response(exc)
         raise HTTPException(status_code=status_code, detail=detail)

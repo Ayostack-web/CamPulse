@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import sys
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,9 +13,10 @@ from app.core.middleware import ActivityTrackingMiddleware
 from app.routers import (
     health, colleges, courses, topics, user, materials,
     qna, gamification, settings as settings_router, collaboration, maintenance,
-    documents, analytics, insights, ws, google_drive, study_agent,
+    documents, ws, google_drive, study_agent,
     digest, flashcards, payments, plans, solved_bank,
 )
+from app.services.realtime import start_subscriber
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -38,7 +41,14 @@ if not settings.cors_origin_list:
     )
     sys.exit(1)
 
-app = FastAPI(title=settings.app_name, version="2.0.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    subscriber_task = asyncio.create_task(start_subscriber())
+    yield
+    subscriber_task.cancel()
+
+
+app = FastAPI(title=settings.app_name, version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,8 +91,6 @@ app.include_router(study_agent.router, prefix=settings.api_prefix)
 
 # AI/ML routers (from python-service)
 app.include_router(documents.router, prefix=settings.api_prefix)
-app.include_router(analytics.router, prefix=settings.api_prefix)
-app.include_router(insights.router, prefix=settings.api_prefix)
 
 # WebSocket
 app.include_router(ws.router)
