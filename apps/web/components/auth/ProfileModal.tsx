@@ -226,10 +226,10 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
       if (!session) throw new Error('No session');
 
       const body: Record<string, unknown> = {};
-      if (fullName.trim()) body.fullName = fullName.trim();
-      if (currentLevel) body.currentLevel = currentLevel;
-      if (selectedUniId) body.collegeId = selectedUniId;
-      if (selectedDeptId) body.departmentId = selectedDeptId;
+      if (fullName.trim()) body.full_name = fullName.trim();
+      if (currentLevel) body.current_level = currentLevel;
+      if (selectedUniId) body.college_id = selectedUniId;
+      if (selectedDeptId) body.department_id = selectedDeptId;
 
       const res = await fetch('/api/user/profile', {
         method: 'PATCH',

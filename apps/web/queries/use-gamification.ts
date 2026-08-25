@@ -39,6 +39,20 @@ export interface StreakAndPoints {
   last_activity_at: string | null;
 }
 
+export interface RewardItem {
+  code: string;
+  name: string;
+  description: string;
+  category: string;
+  points_cost: number;
+  affordable: boolean;
+}
+
+export interface RewardsData {
+  balance: number;
+  items: RewardItem[];
+}
+
 export function useStreakAndPoints() {
   return useQuery({
     queryKey: ['gamification-streak-and-points'],
@@ -96,5 +110,30 @@ export function usePointsLeaderboard() {
     queryKey: ['gamification-leaderboard-points'],
     queryFn: () => authFetch('/api/gamification/leaderboard/points') as Promise<LeaderboardEntry[]>,
     staleTime: 60_000,
+  });
+}
+
+export function useRewards() {
+  return useQuery({
+    queryKey: ['gamification-rewards'],
+    queryFn: () => authFetch('/api/gamification/rewards') as Promise<RewardsData>,
+    staleTime: 30_000,
+  });
+}
+
+export function useRedeemReward() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rewardCode: string) =>
+      authFetch('/api/gamification/rewards/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ reward_code: rewardCode }),
+      }) as Promise<{ name: string; queries_granted: number; balance_after: number }>,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['gamification-rewards'] });
+      qc.invalidateQueries({ queryKey: ['gamification-streak-and-points'] });
+      qc.invalidateQueries({ queryKey: ['gamification-points'] });
+      qc.invalidateQueries({ queryKey: ['ai-tokens'] });
+    },
   });
 }

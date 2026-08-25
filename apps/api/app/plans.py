@@ -92,7 +92,7 @@ PLANS: dict[str, Plan] = {
 # presented on the public pricing page.
 PAYWALL_ORDER = ["night", "semester", "session"]
 # Tiers shown on the public /pricing page.
-PUBLIC_ORDER = ["free", "night", "semester", "session"]
+PUBLIC_ORDER = ["free", "night", "semester", "session", "topup"]
 
 PAID_PLAN_KEYS = {key for key, plan in PLANS.items() if plan.price_kobo > 0}
 

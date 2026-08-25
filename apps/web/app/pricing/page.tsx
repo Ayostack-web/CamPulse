@@ -43,7 +43,8 @@ export default function PricingPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const res = await fetch(`/api/payments/verify?reference=${ref}`, {
+      const res = await fetch(`/api/payments/verify?reference=${encodeURIComponent(ref)}`, {
+        method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
 

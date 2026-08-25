@@ -18,7 +18,7 @@ import { ReadOnlyBanner } from '@/components/auth/ReadOnlyMode';
 import { SchoolEmailBanner } from '@/components/auth/SchoolEmailBanner';
 import { LevelUpdateBanner } from '@/components/dashboard/LevelUpdateBanner';
 import { ProfileModal } from '@/components/auth/ProfileModal';
-import { StreakBanner, PointsCounter, LeaderboardPanel, BadgeShowcase } from '@/components/gamification';
+import { StreakBanner, PointsCounter, LeaderboardPanel, BadgeShowcase, RewardsPanel } from '@/components/gamification';
 
 export function VylixDashboard() {
   const [activeLayer, setActiveLayer] = useState<'vault' | 'pulse' | 'questions' | 'chat' | 'qna'>('pulse');
@@ -189,6 +189,7 @@ export function VylixDashboard() {
               </div>
               <PointsCounter />
               <BadgeShowcase />
+              <RewardsPanel />
             </div>
           )}
 

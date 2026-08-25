@@ -5,7 +5,7 @@ import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -242,11 +242,17 @@ async def set_school_email(
 
 @router.post("/update-level")
 async def update_level(
-    level: str,
+    level: str = Body(..., embed=True),
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    valid = ["100L", "200L", "300L", "400L", "500L", "Spillover"]
+    university = await db.get(University, user.user.university_id) if user.user.university_id else None
+    valid_by_program = {
+        "university": ["100L", "200L", "300L", "400L", "500L", "Spillover"],
+        "polytechnic": ["ND1", "ND2", "HND1", "HND2"],
+        "college_of_education": ["NCE1", "NCE2", "NCE3"],
+    }
+    valid = valid_by_program.get(university.program_type if university else "university", valid_by_program["university"])
     if level not in valid:
         raise HTTPException(status_code=400, detail=f"Level must be one of {valid}")
     user.user.current_level = level

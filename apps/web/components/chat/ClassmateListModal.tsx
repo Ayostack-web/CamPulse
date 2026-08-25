@@ -122,10 +122,10 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
       if (!session) throw new Error('No active session');
 
       const body: Record<string, unknown> = {
-        collegeId: selectedUniId,
-        departmentId: selectedDeptId,
+        college_id: selectedUniId,
+        department_id: selectedDeptId,
       };
-      if (currentLevel) body.currentLevel = currentLevel;
+      if (currentLevel) body.current_level = currentLevel;
 
       const res = await fetch('/api/user/profile', {
         method: 'PATCH',
