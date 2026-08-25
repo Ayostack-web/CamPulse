@@ -1,13 +1,16 @@
-import type { Metadata } from 'next';
-
-export const metadata: Metadata = {
-  title: 'Terms of Service - Vylix Academic Hub',
-  description: 'Terms of service for Vylix Academic Hub',
-};
+'use client';
 
 export default function TermsOfService() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">
+      <div className="max-w-3xl mx-auto mb-6">
+        <button onClick={() => window.history.back()} className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+      </div>
       <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 p-8 md:p-12">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Terms of Service</h1>
         <p className="text-sm text-gray-500 mb-8">Last updated: July 17, 2026</p>

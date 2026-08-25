@@ -53,17 +53,26 @@ PLANS: dict[str, Plan] = {
         key="night",
         name="Night Class Pass",
         price_kobo=30000,  # ₦300
-        duration_days=2,
-        query_quota=100,
+        duration_days=3,
+        query_quota=150,
         storage_bytes=50 * MB,
         tagline="The impulse buy — cheaper than a bottle of Coke.",
+    ),
+    "weekly": Plan(
+        key="weekly",
+        name="Weekly Boost",
+        price_kobo=80000,  # ₦800
+        duration_days=7,
+        query_quota=500,
+        storage_bytes=100 * MB,
+        tagline="Perfect for assignment weeks and test prep.",
     ),
     "semester": Plan(
         key="semester",
         name="Semester Pro",
-        price_kobo=350000,  # ₦3,500
+        price_kobo=300000,  # ₦3,000
         duration_days=120,
-        query_quota=2000,
+        query_quota=2500,
         storage_bytes=250 * MB,
         tagline="Anchored to the price of a standard departmental handout.",
         featured=True,
@@ -71,28 +80,27 @@ PLANS: dict[str, Plan] = {
     "session": Plan(
         key="session",
         name="Session VIP",
-        price_kobo=600000,  # ₦6,000
+        price_kobo=550000,  # ₦5,500
         duration_days=270,
-        query_quota=4500,
+        query_quota=5000,
         storage_bytes=500 * MB,
-        tagline="Save ₦1,000 vs two Semester Pro passes.",
+        tagline="Best per-query value — built for the long haul.",
     ),
     "topup": Plan(
         key="topup",
         name="AI Top-Up",
         price_kobo=100000,  # ₦1,000
         duration_days=365,
-        query_quota=500,
+        query_quota=600,
         storage_bytes=0,
         tagline="More AI questions when you run out. Stacks on any pass.",
     ),
 }
 
-# Paid tiers shown in the paywall (night / semester / session). Free is only
-# presented on the public pricing page.
-PAYWALL_ORDER = ["night", "semester", "session"]
+# Paid tiers shown in the paywall (night / weekly / semester / session).
+PAYWALL_ORDER = ["night", "weekly", "semester", "session"]
 # Tiers shown on the public /pricing page.
-PUBLIC_ORDER = ["free", "night", "semester", "session", "topup"]
+PUBLIC_ORDER = ["free", "night", "weekly", "semester", "session", "topup"]
 
 PAID_PLAN_KEYS = {key for key, plan in PLANS.items() if plan.price_kobo > 0}
 

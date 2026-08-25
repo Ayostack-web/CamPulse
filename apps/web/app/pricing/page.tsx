@@ -100,10 +100,13 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-[#f6f7fb]">
       <header className="border-b border-gray-100 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <button onClick={() => router.push('/')} className="text-sm font-bold text-gray-900 hover:text-blue-600 transition-colors">
-            Vylix
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
+          <button onClick={() => router.back()} className="p-2 -ml-2 rounded-xl hover:bg-gray-100 active:bg-gray-200/60 transition-colors" aria-label="Go back">
+            <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
           </button>
+          <span className="text-sm font-bold text-gray-900">Vylix</span>
         </div>
       </header>
 
