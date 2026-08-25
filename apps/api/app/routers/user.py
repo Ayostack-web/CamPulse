@@ -42,7 +42,6 @@ class UserProfileOut(BaseModel):
     matric_number: str | None = None
     entry_year: int | None = None
     current_level: str | None = None
-    school_email: str | None = None
     status: str = "STUDENT"
     college_id: str | None = None
     department_id: str | None = None
@@ -50,7 +49,6 @@ class UserProfileOut(BaseModel):
     avatar_url: str | None = None
     contribution_score: int = 0
     email_prompt_dismissed_at: str | None = None
-    school_email_prompt_dismissed_at: str | None = None
     created_at: str | None = None
     college_name: str | None = None
     department_name: str | None = None
@@ -102,11 +100,10 @@ async def get_profile(
     return UserProfileOut(
         id=u.id, full_name=u.full_name, matric_number=u.matric_number,
         entry_year=u.entry_year, current_level=u.current_level,
-        school_email=u.school_email, status=u.status.value,
+        status=u.status.value,
         college_id=u.university_id, department_id=u.department_id,
         bio=u.bio, avatar_url=u.avatar_url, contribution_score=u.contribution_score,
         email_prompt_dismissed_at=str(u.email_prompt_dismissed_at) if u.email_prompt_dismissed_at else None,
-        school_email_prompt_dismissed_at=str(u.school_email_prompt_dismissed_at) if u.school_email_prompt_dismissed_at else None,
         created_at=str(u.created_at) if u.created_at else None,
         college_name=college_name, department_name=department_name,
         department_code=department_code, program_type=program_type,
@@ -215,29 +212,6 @@ async def dismiss_email_prompt(
     user.user.email_prompt_dismissed_at = datetime.now(timezone.utc)
     await db.flush()
     return {"message": "Dismissed"}
-
-
-@router.post("/dismiss-school-email-prompt")
-async def dismiss_school_email_prompt(
-    user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    user.user.school_email_prompt_dismissed_at = datetime.now(timezone.utc)
-    await db.flush()
-    return {"message": "Dismissed"}
-
-
-@router.post("/school-email")
-async def set_school_email(
-    email: str,
-    user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if not email.endswith(".edu.ng"):
-        raise HTTPException(status_code=400, detail="Must be a .edu.ng email")
-    user.user.school_email = email
-    await db.flush()
-    return {"message": "School email set"}
 
 
 @router.post("/update-level")

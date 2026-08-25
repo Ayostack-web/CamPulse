@@ -14,8 +14,6 @@ interface User {
   matricNumber?: string;
   currentLevel?: string;
   levelUpdatedAt?: string;
-  schoolEmail?: string;
-  schoolEmailPromptDismissedAt?: string;
   graduatedAt?: string;
   collegeId?: string;
   collegeName?: string;
@@ -72,8 +70,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 matricNumber: profile.matric_number,
                 currentLevel: profile.current_level,
                 levelUpdatedAt: profile.level_updated_at,
-                schoolEmail: profile.school_email,
-                schoolEmailPromptDismissedAt: profile.school_email_prompt_dismissed_at,
                 graduatedAt: profile.graduated_at,
                 collegeId: profile.college_id,
                 collegeName: profile.college_name,

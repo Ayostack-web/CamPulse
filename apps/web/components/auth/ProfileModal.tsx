@@ -527,12 +527,6 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                     <p className="mt-1 font-semibold text-gray-900 text-sm">{user.departmentName}</p>
                   </div>
                 )}
-                {user.schoolEmail && (
-                  <div className="rounded-xl bg-green-50 border border-green-200 p-3 col-span-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-green-700">University Email</p>
-                    <p className="mt-1 font-semibold text-gray-900 text-sm">{user.schoolEmail}</p>
-                  </div>
-                )}
               </div>
 
               <div className="flex gap-3 pt-1">

@@ -15,7 +15,6 @@ import { QnaView } from '@/components/dashboard/QnaView';
 import { useNetworkState } from '@/hooks/useNetworkState';
 import { useAuth } from '@/context/auth-context';
 import { ReadOnlyBanner } from '@/components/auth/ReadOnlyMode';
-import { SchoolEmailBanner } from '@/components/auth/SchoolEmailBanner';
 import { LevelUpdateBanner } from '@/components/dashboard/LevelUpdateBanner';
 import { ProfileModal } from '@/components/auth/ProfileModal';
 import { StreakBanner, PointsCounter, LeaderboardPanel, BadgeShowcase, RewardsPanel } from '@/components/gamification';
@@ -160,8 +159,6 @@ export function VylixDashboard() {
           {!isAuthenticated && (
             <ReadOnlyBanner action="upload materials and access full features" />
           )}
-
-          {isAuthenticated && !isAlumni && !user?.schoolEmail && <SchoolEmailBanner />}
 
           {isAuthenticated && !isAlumni && <LevelUpdateBanner />}
 

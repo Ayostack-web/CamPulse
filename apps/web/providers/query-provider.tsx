@@ -7,26 +7,18 @@ import { AuthProvider } from '@/context/auth-context';
 import { ProgressiveGatingProvider, useProgressiveGating } from '@/context/progressive-gating-context';
 import { DriveProvider } from '@/context/drive-context';
 import { LoginModal } from '@/components/auth/LoginModal';
-import { EmailVerificationModal } from '@/components/auth/EmailVerificationModal';
 import { GraduationCelebrationModal } from '@/components/auth/GraduationCelebrationModal';
 import { InstallPrompt } from '@/components/pwa/InstallPrompt';
 import { PointsRefreshListener } from '@/components/gamification/PointsRefreshListener';
 
 function ProgressiveGatingModals() {
-  const { showEmailModal, closeEmailModal, onEmailVerified, showGraduationModal, closeGraduationModal } = useProgressiveGating();
+  const { showGraduationModal, closeGraduationModal } = useProgressiveGating();
 
   return (
-    <>
-      <EmailVerificationModal
-        isOpen={showEmailModal}
-        onClose={closeEmailModal}
-        onVerified={onEmailVerified}
-      />
-      <GraduationCelebrationModal
-        isOpen={showGraduationModal}
-        onClose={closeGraduationModal}
-      />
-    </>
+    <GraduationCelebrationModal
+      isOpen={showGraduationModal}
+      onClose={closeGraduationModal}
+    />
   );
 }
 

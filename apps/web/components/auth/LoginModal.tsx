@@ -94,15 +94,10 @@ export function LoginModal() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@funaab.edu.ng"
+              placeholder="you@example.com"
               className="w-full rounded-lg border border-blue-100 bg-blue-50 px-4 py-2.5 text-gray-900 placeholder-gray-500 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
               disabled={isLoading}
             />
-            {isSignUp && (
-              <p className="mt-1 text-xs text-gray-600">
-                Use your FUNAAB institutional email
-              </p>
-            )}
           </div>
 
           {/* Password Input */}
