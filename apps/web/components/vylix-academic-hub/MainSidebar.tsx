@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { getSupabaseBrowserClient } from '@/lib/supabase-client'
+import { useStreakAndPoints } from '@/queries/use-gamification'
+import { useAuth } from '@/context/auth-context'
 
 
 interface Course {
@@ -33,6 +35,8 @@ export function MainSidebar({ selectedCourseId, onSelectCourse, variant = 'deskt
   const [levelFilter, setLevelFilter] = useState<string | null>(null)
   const [courses, setCourses] = useState<Course[]>([])
   const [loading, setLoading] = useState(true)
+  const { isAuthenticated } = useAuth()
+  const { data: stats } = useStreakAndPoints()
 
   const fetchCourses = useCallback(async () => {
     try {
@@ -121,6 +125,31 @@ export function MainSidebar({ selectedCourseId, onSelectCourse, variant = 'deskt
           </svg>
         </button>
       </div>
+
+      {/* Gamification widget - streak & points */}
+      {isAuthenticated && !collapsed && stats && (stats.current_streak > 0 || stats.total_points > 0) && (
+        <div className="px-3 pb-2 shrink-0">
+          <div className="flex items-center gap-2 p-2 rounded-xl bg-gradient-to-r from-orange-50/80 to-amber-50/50 border border-orange-100/60">
+            {stats.current_streak > 0 && (
+              <div className="flex items-center gap-1">
+                <span className="text-sm">🔥</span>
+                <span className="text-[11px] font-bold text-orange-700">{stats.current_streak}</span>
+              </div>
+            )}
+            {stats.current_streak > 0 && stats.total_points > 0 && (
+              <span className="w-px h-3 bg-orange-200/60" />
+            )}
+            {stats.total_points > 0 && (
+              <div className="flex items-center gap-1">
+                <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+                <span className="text-[11px] font-bold text-amber-700">{stats.total_points.toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Search & Filters */}
       {!collapsed && (
