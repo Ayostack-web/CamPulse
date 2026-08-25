@@ -378,37 +378,6 @@ export function VylixDashboard() {
               </aside>
             )}
           </div>
-
-          <footer className="mt-auto border-t border-blue-100 bg-gradient-to-r from-blue-50/80 to-sky-50/35 px-3 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
-            <div className="flex items-center justify-between gap-3 text-left">
-              <div>
-                <p className="font-bold text-[10px] uppercase tracking-wider bg-gradient-to-r from-blue-600 via-sky-600 to-cyan-400 bg-clip-text text-transparent">
-                  Vylix Academic Hub
-                </p>
-                <p className="mt-0.5 cp-body text-[11px] sm:text-xs">
-                  © 2026 Vylix Academic Hub
-                </p>
-              </div>
-
-              <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 shadow-sm transition-all hover:shadow-md">
-                <span className="relative flex h-2 w-2">
-                  <span
-                    className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${
-                      isAuthenticated ? 'bg-emerald-400' : 'bg-slate-400'
-                    }`}
-                  />
-                  <span
-                    className={`relative inline-flex h-2 w-2 rounded-full ${
-                      isAuthenticated ? 'bg-emerald-500' : 'bg-slate-400'
-                    }`}
-                  />
-                </span>
-                <span className="cp-pill sm:text-[10px]">
-                  {isAuthenticated ? 'Authenticated' : 'Guest'}
-                </span>
-              </div>
-            </div>
-          </footer>
         </div>
       </div>
 
