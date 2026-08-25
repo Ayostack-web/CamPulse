@@ -23,6 +23,7 @@ type MobileView = 'home' | 'courses' | 'content' | 'chat' | 'tools' | 'pastquest
 export function ThreePanelLayout() {
   const { user, isAuthenticated, promptLogin } = useAuth()
   const [mobileView, setMobileView] = useState<MobileView>('home')
+  const [previousView, setPreviousView] = useState<MobileView>('home')
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null)
   const [selectedDoc, setSelectedDoc] = useState<DocumentInfo | null>(null)
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
@@ -31,6 +32,16 @@ export function ThreePanelLayout() {
 
   const isHome = mobileView === 'home'
   const activeView = mobileView === 'chat' ? 'chat' : mobileView === 'pastquestions' ? 'pastquestions' : 'courses'
+
+  const navigateTo = (view: MobileView) => {
+    setPreviousView(mobileView)
+    setMobileView(view)
+  }
+
+  const goBack = () => {
+    setMobileView(previousView)
+    setPreviousView('home')
+  }
 
   const initials = (user?.fullName || 'U').split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
 
@@ -41,7 +52,17 @@ export function ThreePanelLayout() {
       <header className={`fixed left-0 right-0 z-30 header-premium pt-[env(safe-area-inset-top)] md:hidden ${!isAuthenticated ? 'top-[72px]' : 'top-0'}`}>
         <div className="flex items-center justify-between px-3 py-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            {selectedCourseId && activeView === 'courses' ? (
+            {(activeView === 'chat' || activeView === 'pastquestions') ? (
+              <button
+                onClick={goBack}
+                className="p-2 rounded-xl hover:bg-gray-100/80 active:bg-gray-200/60 shrink-0 transition-colors"
+                aria-label="Go back"
+              >
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            ) : selectedCourseId && activeView === 'courses' ? (
               <button
                 onClick={() => { setSelectedCourseId(null); setSelectedDoc(null) }}
                 className="p-2 rounded-xl hover:bg-gray-100/80 active:bg-gray-200/60 shrink-0 transition-colors"
@@ -86,7 +107,7 @@ export function ThreePanelLayout() {
             {isAuthenticated && (
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => { if (!isAuthenticated) { promptLogin('chat with classmates'); return } setMobileView('chat') }}
+                  onClick={() => { if (!isAuthenticated) { promptLogin('chat with classmates'); return } navigateTo('chat') }}
                   className="p-2 rounded-xl hover:bg-gray-100/80 active:bg-gray-200/60 text-gray-400 hover:text-blue-600 transition-colors"
                   aria-label="Open chat"
                 >
@@ -165,15 +186,29 @@ export function ThreePanelLayout() {
         {/* Top bar with user identity and nav */}
         <div className="flex items-center justify-between px-3 py-2.5 divider-premium shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-sky-500 flex items-center justify-center shadow-md shadow-blue-600/20">
-              <span className="text-white text-[11px] font-black">V</span>
-            </div>
-            <span className="text-xs font-bold tracking-tight text-gray-700">Vylix</span>
+            {(activeView === 'chat' || activeView === 'pastquestions') ? (
+              <button
+                onClick={goBack}
+                className="p-1.5 rounded-lg hover:bg-gray-100/80 active:bg-gray-200/60 text-gray-400 hover:text-gray-600 transition-colors shrink-0"
+                aria-label="Go back"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            ) : (
+              <>
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-sky-500 flex items-center justify-center shadow-md shadow-blue-600/20">
+                  <span className="text-white text-[11px] font-black">V</span>
+                </div>
+                <span className="text-xs font-bold tracking-tight text-gray-700">Vylix</span>
+              </>
+            )}
           </div>
           {isAuthenticated && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { if (!isAuthenticated) { promptLogin('chat with classmates'); return } setMobileView('chat') }}
+                onClick={() => { if (!isAuthenticated) { promptLogin('chat with classmates'); return } navigateTo('chat') }}
                 className="p-2 rounded-xl hover:bg-gray-100/80 active:bg-gray-200/60 text-gray-400 hover:text-blue-600 transition-colors"
                 aria-label="Open chat"
               >
@@ -201,7 +236,7 @@ export function ThreePanelLayout() {
         {/* View switcher */}
         <div className="px-3 pb-2 flex gap-1 shrink-0">
           <button
-            onClick={() => setMobileView('home')}
+            onClick={() => navigateTo('home')}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold transition-all duration-200 ${
               isHome
                 ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm shadow-blue-600/20'
@@ -214,7 +249,7 @@ export function ThreePanelLayout() {
             Home
           </button>
           <button
-            onClick={() => setMobileView('content')}
+            onClick={() => navigateTo('content')}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold transition-all duration-200 ${
               activeView === 'courses'
                 ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm shadow-blue-600/20'
@@ -227,7 +262,7 @@ export function ThreePanelLayout() {
             Courses
           </button>
           <button
-            onClick={() => setMobileView('pastquestions')}
+            onClick={() => navigateTo('pastquestions')}
             className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-semibold transition-all duration-200 ${
               activeView === 'pastquestions'
                 ? 'bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-sm shadow-blue-600/20'
@@ -284,7 +319,7 @@ export function ThreePanelLayout() {
       <nav className="fixed bottom-0 left-0 right-0 z-30 bottom-nav pb-[env(safe-area-inset-bottom)] md:hidden safe-bottom">
         <div className="flex items-center justify-around px-2 py-1.5">
           <button
-            onClick={() => { setShowTools(false); setMobileView('home') }}
+            onClick={() => { setShowTools(false); navigateTo('home') }}
             className={`bottom-nav-item flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl relative ${mobileView === 'home' ? 'is-active' : 'text-gray-400'}`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -295,7 +330,7 @@ export function ThreePanelLayout() {
           </button>
 
           <button
-            onClick={() => { setShowMobileSidebar(true); setMobileView('courses') }}
+            onClick={() => { setShowMobileSidebar(true); navigateTo('courses') }}
             className={`bottom-nav-item flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl relative ${mobileView === 'courses' ? 'is-active' : 'text-gray-400'}`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -306,7 +341,7 @@ export function ThreePanelLayout() {
           </button>
 
           <button
-            onClick={() => setMobileView('content')}
+            onClick={() => navigateTo('content')}
             className={`bottom-nav-item flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl relative ${mobileView === 'content' ? 'is-active' : 'text-gray-400'}`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,7 +363,7 @@ export function ThreePanelLayout() {
           </button>
 
           <button
-            onClick={() => { setShowTools(false); setMobileView('pastquestions') }}
+            onClick={() => { setShowTools(false); navigateTo('pastquestions') }}
             className={`bottom-nav-item flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl relative ${mobileView === 'pastquestions' ? 'is-active' : 'text-gray-400'}`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
