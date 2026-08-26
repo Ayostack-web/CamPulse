@@ -44,6 +44,9 @@ chromadb>=0.5.0
 # Rate limiting
 slowapi>=0.1.9
 
+# Error tracking
+sentry-sdk[fastapi]>=2.0.0
+
 # Google Drive
 google-auth-oauthlib>=1.2.0
 psycopg-pool>=3.2.0

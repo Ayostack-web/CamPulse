@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # Gate the expensive Pro model; false forces every agent call onto Flash-Lite.
     pro_tier_enabled: bool = Field(default=True)
 
+    # Sentry error tracking
+    sentry_dsn: str | None = Field(default=None)
+    sentry_traces_sample_rate: float = Field(default=0.1)
+    # Optional webhook for critical alerts (Slack, Discord, etc.)
+    alert_webhook_url: str | None = Field(default=None)
+
     # Vector search
     # "auto" uses pgvector when GEMINI_API_KEY is set, otherwise ChromaDB.
     # Explicit "pgvector" or "chromadb" forces the backend.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -17,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 PAYSTACK_BASE = "https://api.paystack.co"
@@ -188,10 +190,17 @@ async def paystack_webhook(request: Request, db: AsyncSession = Depends(get_db))
     raw_body = await request.body()
 
     if not _is_valid_webhook_signature(raw_body, request.headers.get("x-paystack-signature")):
+        from app.services.alerting import alert_critical
+        alert_critical(
+            "Paystack webhook received with invalid/missing signature",
+            source="paystack_webhook",
+            extra={"ip": request.client.host if request.client else "unknown"},
+        )
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     body = await request.json()
     event = body.get("event")
+    logger.info("paystack_webhook event=%s", event)
 
     if event != "charge.success":
         return {"status": "ignored"}
@@ -203,11 +212,23 @@ async def paystack_webhook(request: Request, db: AsyncSession = Depends(get_db))
     plan_key = metadata.get("plan", "semester")
 
     if not reference or not user_id:
+        logger.warning("paystack_webhook missing reference or user_id: ref=%s", reference)
         return {"status": "ignored"}
 
-    sub = await _activate_subscription(db, user_id, reference, plan_key)
+    try:
+        sub = await _activate_subscription(db, user_id, reference, plan_key)
+    except Exception as exc:
+        from app.services.alerting import alert_critical
+        alert_critical(
+            f"Paystack webhook activation failed: {exc}",
+            source="paystack_webhook",
+            extra={"reference": reference, "user_id": user_id, "plan": plan_key},
+        )
+        raise
+
     if sub.plan != plan_key:
         return {"status": "duplicate"}
 
+    logger.info("paystack_webhook activated plan=%s ref=%s user=%s", plan_key, reference, user_id)
     await db.commit()
     return {"status": "ok"}

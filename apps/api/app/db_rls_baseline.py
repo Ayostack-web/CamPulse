@@ -42,6 +42,10 @@ class TableSpec:
 
 def _owner(table: str, col: str) -> TableSpec:
     pred = _owned(f"{table}.{col} = {_UID}")
+    # notifications INSERT is service-only: users cannot forge notifications
+    # for other users. All other CRUD ops follow the standard owner pattern.
+    if table == "notifications":
+        return TableSpec(table, "owner", pred, _NOCTX, pred, pred)
     return TableSpec(table, "owner", pred, pred, pred, pred)
 
 
@@ -116,7 +120,11 @@ SPECIAL_SPECS: list[TableSpec] = [
               _owned(_MEMBER), _owned(f"conversations.created_by_id = {_UID}"),
               _owned(_MEMBER), _owned(f"conversations.created_by_id = {_UID}")),
     TableSpec("conversation_members", "owner",
-              _owned(_CM_MEMBER), "true",
+              _owned(_CM_MEMBER),
+              # INSERT: only service path (no user context) or existing
+              # conversation members can add new members. Prevents any
+              # user from adding themselves to arbitrary conversations.
+              f"({_CM_MEMBER} OR {_NOCTX})",
               _owned(_CM_MEMBER),
               _owned(f"conversation_members.user_id = {_UID}")),
     # membership rows may be inserted by the app during conversation

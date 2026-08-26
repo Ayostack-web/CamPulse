@@ -3,6 +3,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
+import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +21,16 @@ from app.services.realtime import start_subscriber
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# ── Sentry ────────────────────────────────────────────────────────────
+
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.environment,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+        send_default_pii=True,
+    )
 
 # ── Structured logging ──────────────────────────────────────────────
 
@@ -65,11 +76,14 @@ app.add_middleware(AccessLogMiddleware)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    """Log unhandled errors and return a JSON 500 with a readable detail."""
+    """Log unhandled errors and return a safe 500 to the client."""
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    # Capture in Sentry if configured
+    sentry_sdk.capture_exception(exc)
+    # Never leak exception details, class names, or stack traces to clients
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error ({type(exc).__name__}: {exc})"},
+        content={"detail": "Internal server error"},
     )
 
 # Core routers
