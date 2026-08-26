@@ -16,8 +16,10 @@ COPY db/ db/
 EXPOSE 4000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4000"]
 FROM base AS worker
-COPY requirements-lean.txt .
-RUN pip install --no-cache-dir -r requirements-lean.txt
+# Worker needs full deps for document parsing (pytesseract, easyocr, docling).
+# The lean requirements file skips these, causing silent degradation.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ app/
 CMD ["celery", "-A", "app.core.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
 

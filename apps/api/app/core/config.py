@@ -21,10 +21,10 @@ class Settings(BaseSettings):
         default="postgresql://postgres:postgres@localhost:5432/vylix"
     )
 
-    # Redis
+    # Redis — rate-limiting & caching (separate from Celery to prevent eviction)
     redis_url: str = Field(default="redis://localhost:6379/0")
 
-    # Celery
+    # Celery — broker and result backend (isolated DBs, can't evict rate-limit keys)
     celery_broker_url: str = Field(default="redis://localhost:6379/2")
     celery_result_backend: str = Field(default="redis://localhost:6379/1")
 

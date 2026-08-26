@@ -4,7 +4,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import redis.asyncio as aioredis
 from fastapi import Depends, HTTPException, Request
@@ -26,6 +26,9 @@ from app.services.points import maybe_activate_referral
 logger = logging.getLogger(__name__)
 settings = get_settings()
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# West Africa Time (UTC+1) — Nigerian students expect daily resets at midnight WAT.
+WAT = timezone(timedelta(hours=1))
 
 
 class RateLimiter:
@@ -166,8 +169,9 @@ async def spend_ai_query(current_user: CurrentUser, db: AsyncSession) -> None:
                         daily_cap = plan_cfg.daily_query_cap
 
         if daily_cap is not None:
-            today = now.date()
-            if u.daily_tokens_reset_at is None or u.daily_tokens_reset_at.date() < today:
+            today_wat = now.astimezone(WAT).date()
+            reset_wat = u.daily_tokens_reset_at.astimezone(WAT).date() if u.daily_tokens_reset_at else None
+            if reset_wat is None or reset_wat < today_wat:
                 u.daily_tokens_used = 0
                 u.daily_tokens_reset_at = now
 
@@ -194,8 +198,9 @@ async def spend_ai_query(current_user: CurrentUser, db: AsyncSession) -> None:
         await db.flush()
         return
 
-    today = now.date()
-    if u.daily_tokens_reset_at is None or u.daily_tokens_reset_at.date() < today:
+    today_wat = now.astimezone(WAT).date()
+    reset_wat = u.daily_tokens_reset_at.astimezone(WAT).date() if u.daily_tokens_reset_at else None
+    if reset_wat is None or reset_wat < today_wat:
         u.daily_tokens_used = 0
         u.daily_tokens_reset_at = now
 
