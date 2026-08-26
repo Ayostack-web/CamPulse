@@ -14,6 +14,7 @@ from app.database import get_db
 from app.deps import CurrentUser, check_payment_rate_limit, get_current_user
 from app.models import Subscription, User
 from app import plans
+from app.services.paywall_log import record_paywall_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -232,3 +233,27 @@ async def paystack_webhook(request: Request, db: AsyncSession = Depends(get_db))
     logger.info("paystack_webhook activated plan=%s ref=%s user=%s", plan_key, reference, user_id)
     await db.commit()
     return {"status": "ok"}
+
+
+# ── Paywall funnel events ──────────────────────────────────────────
+
+
+class PaywallEventRequest(BaseModel):
+    event_type: str
+    plan_key: str | None = None
+    metadata: dict | None = None
+
+
+@router.post("/paywall/events")
+async def paywall_event(
+    body: PaywallEventRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Best-effort paywall funnel tracking. Never fails the client."""
+    record_paywall_event(
+        user_id=user.user.id,
+        event_type=body.event_type,
+        plan_key=body.plan_key,
+        metadata=body.metadata,
+    )
+    return {"ok": True}

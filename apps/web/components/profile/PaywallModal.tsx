@@ -5,6 +5,7 @@ import { useAuth } from '@/context/auth-context';
 import { formatNaira, initializePaystackPayment } from '@/lib/payments';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useAiTokens, usePlans, type Plan } from '@/queries/use-ai-tokens';
+import { trackPaywallEvent } from '@/lib/analytics';
 
 const PAYWALL_ORDER = ['night', 'weekly', 'semester', 'session'];
 
@@ -41,6 +42,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
       document.body.style.overflow = 'hidden';
       setError(null);
       refetchTokens();
+      trackPaywallEvent('paywall_shown');
     } else {
       document.body.style.overflow = '';
     }
@@ -69,10 +71,12 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
       return;
     }
 
+    trackPaywallEvent('plan_clicked', plan.key);
     setPayingFor(plan.key);
     setError(null);
     try {
       const { authorization_url } = await initializePaystackPayment(email, plan.key);
+      trackPaywallEvent('checkout_started', plan.key);
       window.location.assign(authorization_url);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Payment initialization failed. Please try again.');
@@ -179,14 +183,14 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
         )}
 
         <button
-          onClick={onClose}
+          onClick={() => { trackPaywallEvent('paywall_dismissed'); onClose(); }}
           className="w-full mt-4 py-2.5 rounded-xl bg-gray-100 text-gray-600 font-medium text-xs hover:bg-gray-200 transition-all"
         >
           Maybe Later
         </button>
 
         <p className="text-[10px] text-gray-400 text-center mt-3">
-          Secured by Paystack · Free tier: {tokens?.is_premium ? '—' : '5 AI queries/day'}
+          Secured by Monnify · Free tier: {tokens?.is_premium ? '—' : '5 AI queries/day'}
         </p>
       </div>
     </div>
