@@ -34,6 +34,13 @@ export function VylixDashboard() {
   ];
 
   useEffect(() => {
+    if (sessionStorage.getItem('vylix_reopen_profile') === '1') {
+      sessionStorage.removeItem('vylix_reopen_profile');
+      setShowProfileModal(true);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!isOnline && activeLayer === 'pulse') {
       setActiveLayer('vault');
     }

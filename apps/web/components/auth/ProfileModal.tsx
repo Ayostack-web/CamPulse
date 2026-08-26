@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/auth-context';
@@ -47,6 +48,7 @@ const RARITY_COLORS: Record<string, string> = {
 };
 
 export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
+  const router = useRouter();
   const { user, refreshProfile, logout, updateAvatar } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const supabase = getSupabaseBrowserClient();
@@ -687,15 +689,15 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick Links</p>
                 <div className="space-y-1.5">
-                  <Link
-                    href="/pricing"
-                    className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+                  <button
+                    onClick={() => { sessionStorage.setItem('vylix_reopen_profile', '1'); router.push('/pricing'); }}
+                    className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors w-full text-left"
                   >
                     <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     Pricing & Plans
-                  </Link>
+                  </button>
                   <Link
                     href="/terms"
                     className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
