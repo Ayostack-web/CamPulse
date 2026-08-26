@@ -16,7 +16,7 @@ function durationLabel(days: number | null): string {
 }
 
 function featureList(plan: Plan): string[] {
-  const features = [`${plan.query_quota?.toLocaleString() ?? '5 AI queries/day'}`];
+  const features = [`${plan.query_quota?.toLocaleString() ?? '3 AI queries/day'}`];
   if (plan.storage_mb > 0) {
     features.push(`${plan.storage_mb}MB extra storage`);
   }
@@ -182,7 +182,7 @@ export default function PricingPage() {
         )}
 
         <p className="text-xs text-gray-400 text-center mt-8">
-          Secured by Monnify · Free tier includes 5 AI queries/day
+          Secured by Monnify · Free tier includes 3 AI queries/day
         </p>
       </div>
     </div>

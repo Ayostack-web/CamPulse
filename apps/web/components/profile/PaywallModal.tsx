@@ -190,7 +190,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
         </button>
 
         <p className="text-[10px] text-gray-400 text-center mt-3">
-          Secured by Monnify · Free tier: {tokens?.is_premium ? '—' : '5 AI queries/day'}
+          Secured by Monnify · Free tier: {tokens?.is_premium ? '—' : '3 AI queries/day'}
         </p>
       </div>
     </div>
