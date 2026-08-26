@@ -16,6 +16,8 @@ export interface AiTokensData {
   storage_remaining_bytes: number;
   expires_at: string | null;
   has_paid_pass: boolean;
+  daily_query_cap: number | null;
+  daily_queries_used: number | null;
 }
 
 export function useAiTokens() {

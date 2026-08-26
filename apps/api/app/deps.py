@@ -136,6 +136,8 @@ async def spend_ai_query(current_user: CurrentUser, db: AsyncSession) -> None:
 
     Order of preference:
       1. A paid pass with remaining capacity (atomic spend — hard cap).
+         Long-duration plans (semester, session) enforce a daily soft cap
+         to spread usage across the subscription window.
       2. The free daily counter (5/day, 10 on the first day).
 
     A user who holds paid passes but has exhausted all of them gets a hard
@@ -145,10 +147,43 @@ async def spend_ai_query(current_user: CurrentUser, db: AsyncSession) -> None:
     know an AI call will actually happen (e.g. document chat skips the
     charge when retrieval finds nothing).
     """
+    from app.entitlements import active_passes as _active_passes
+    from app import plans as plans_mod
+
     u = current_user.user
     now = datetime.now(timezone.utc)
 
     if await has_active_paid_pass(db, u.id):
+        # ── Daily soft cap for long-duration plans ──────────────────────
+        # Resolve the most restrictive daily cap across active paid passes.
+        passes = await _active_passes(db, u.id)
+        daily_cap = None
+        for p in passes:
+            if p.quota_total and p.plan in plans_mod.PLANS:
+                plan_cfg = plans_mod.PLANS[p.plan]
+                if plan_cfg.daily_query_cap is not None:
+                    if daily_cap is None or plan_cfg.daily_query_cap < daily_cap:
+                        daily_cap = plan_cfg.daily_query_cap
+
+        if daily_cap is not None:
+            today = now.date()
+            if u.daily_tokens_reset_at is None or u.daily_tokens_reset_at.date() < today:
+                u.daily_tokens_used = 0
+                u.daily_tokens_reset_at = now
+
+            if u.daily_tokens_used >= daily_cap:
+                raise HTTPException(
+                    status_code=429,
+                    detail="DAILY_LIMIT_REACHED",
+                    headers={
+                        "X-Tokens-Reset": "midnight",
+                        "X-Quota-Scope": "paid-daily-cap",
+                        "X-Daily-Cap": str(daily_cap),
+                    },
+                )
+            u.daily_tokens_used += 1
+            u.daily_tokens_reset_at = now
+
         if not await spend_paid_query(db, u.id):
             raise HTTPException(
                 status_code=429,

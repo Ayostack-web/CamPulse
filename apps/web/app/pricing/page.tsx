@@ -121,7 +121,7 @@ export default function PricingPage() {
         {plansLoading || !plans ? (
           <p className="text-center text-gray-400 text-sm">Loading plans...</p>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
             {plans.map((plan) => (
               <div
                 key={plan.key}

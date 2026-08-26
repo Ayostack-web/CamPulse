@@ -12,10 +12,13 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest"
+API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
-#: Model used by the urllib-backed call path below.
-MODEL_NAME = "gemini-flash-lite-latest"
+#: Default model for lightweight queries (cheapest tier).
+DEFAULT_MODEL = "gemini-flash-lite-latest"
+
+#: Mid-tier model for heavier tasks (document analysis, complex chat).
+FLASH_MODEL = "gemini-3-flash"
 
 #: Approximate USD cost per 1M tokens by model (input, output). These are
 #: estimates used ONLY for usage/cost logging — verify them against the
@@ -97,9 +100,12 @@ def _call(
     user_id: str | None = None,
     usage: list | None = None,
     feature: str = "unattributed",
+    model: str | None = None,
 ) -> str | None:
-    """Call Gemini Flash-Lite and return the generated text.
+    """Call Gemini and return the generated text.
 
+    ``model`` selects the Gemini variant; defaults to Flash-Lite (cheapest).
+    Use ``gemini-3-flash`` for heavier tasks that need more reasoning.
     When ``usage`` is provided (a list), it receives a
     ``(prompt_tokens, completion_tokens)`` tuple so callers can track cost.
     ``feature`` labels the calling surface in the ai_usage table.
@@ -108,7 +114,8 @@ def _call(
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not configured")
 
-    url = f"{API_BASE}:generateContent?key={settings.gemini_api_key}"
+    model_name = model or DEFAULT_MODEL
+    url = f"{API_BASE}/{model_name}:generateContent?key={settings.gemini_api_key}"
 
     body: dict[str, Any] = {
         "contents": [{"parts": [{"text": prompt}]}],
@@ -160,10 +167,10 @@ def _call(
         total_tokens = meta.get("totalTokenCount") or (prompt_tokens + completion_tokens)
         if usage is not None:
             usage.append((prompt_tokens, completion_tokens))
-        cost = estimate_cost(MODEL_NAME, prompt_tokens, completion_tokens)
+        cost = estimate_cost(model_name, prompt_tokens, completion_tokens)
         logger.info(
             "gemini_usage model=%s user=%s feature=%s prompt_tokens=%d completion_tokens=%d total_tokens=%d cost_usd=%.6f",
-            MODEL_NAME,
+            model_name,
             user_id or "-",
             feature,
             prompt_tokens,
@@ -174,7 +181,7 @@ def _call(
         from app.services.usage_log import record_ai_usage
 
         record_ai_usage(
-            model=MODEL_NAME,
+            model=model_name,
             feature=feature,
             user_id=user_id,
             prompt_tokens=prompt_tokens,
@@ -211,7 +218,7 @@ def generate_insights(
     )
 
     try:
-        result = _call(prompt, system_instruction=system, user_id=user_id, feature="insights")
+        result = _call(prompt, system_instruction=system, user_id=user_id, feature="insights", model=FLASH_MODEL)
     except GeminiError as exc:
         logger.error("Insights generation failed: %s", exc)
         return None
@@ -243,7 +250,7 @@ def chat(query: str, context: str, user_id: str | None = None, feature: str = "d
         f"Student question: {query}\n\n"
         "Answer:"
     )
-    return _call(prompt, system_instruction=system, user_id=user_id, feature=feature)
+    return _call(prompt, system_instruction=system, user_id=user_id, feature=feature, model=FLASH_MODEL)
 
 
 def general_chat(conversation: str, user_id: str | None = None) -> str | None:
@@ -264,9 +271,11 @@ def call(
     user_id: str | None = None,
     usage: list | None = None,
     feature: str = "unattributed",
+    model: str | None = None,
 ) -> str | None:
-    """Public wrapper around the Flash-Lite call for feature services.
+    """Public wrapper around the Gemini call for feature services.
 
+    ``model`` selects the Gemini variant; defaults to Flash-Lite (cheapest).
     ``usage`` is an optional list that receives a ``(prompt_tokens,
     completion_tokens)`` tuple so callers can track per-call cost.
     ``feature`` labels the calling surface in the ai_usage table.
@@ -277,4 +286,5 @@ def call(
         user_id=user_id,
         usage=usage,
         feature=feature,
+        model=model,
     )

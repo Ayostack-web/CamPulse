@@ -6,7 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/auth-context';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useClassmates, useCreateConversation, type ConversationDetail } from '@/queries/use-collaboration';
-import { levelOptionsFor, isLevelValidFor } from '@/lib/levels';
+import { levelOptionsFor, isLevelValidFor, labelForProgramType, facultyLabelFor, iconForProgramType, PROGRAM_TYPES } from '@/lib/levels';
+import type { ProgramType } from '@/lib/levels';
 
 interface University {
   id: string;
@@ -43,6 +44,7 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
   const [universities, setUniversities] = useState<University[]>([]);
   const [colleges, setColleges] = useState<College[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedProgramType, setSelectedProgramType] = useState('');
   const [selectedUniId, setSelectedUniId] = useState('');
   const [selectedCollegeId, setSelectedCollegeId] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState('');
@@ -50,14 +52,16 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedProgramType = universities.find((u) => u.id === selectedUniId)?.program_type;
   const levelOptions = levelOptionsFor(selectedProgramType);
 
   const needsProfile = !user?.collegeId || !user?.departmentCode;
 
-  const fetchUniversities = useCallback(async () => {
+  const fetchUniversities = useCallback(async (programType?: string) => {
     try {
-      const res = await fetch('/api/colleges');
+      const url = programType
+        ? `/api/colleges?program_type=${encodeURIComponent(programType)}`
+        : '/api/colleges';
+      const res = await fetch(url);
       if (res.ok) setUniversities(await res.json());
     } catch { /* ignore */ }
   }, []);
@@ -77,16 +81,26 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
   }, []);
 
   useEffect(() => {
-    if (!isOpen) return;
-    if (needsProfile) {
-      fetchUniversities();
+    if (!isOpen || !needsProfile) return;
+    if (user?.programType && !selectedProgramType) {
+      setSelectedProgramType(user.programType);
+    }
+  }, [isOpen, needsProfile, user?.programType, selectedProgramType]);
+
+  useEffect(() => {
+    if (!isOpen || !needsProfile || !selectedProgramType) {
+      setUniversities([]);
       setSelectedUniId('');
+      setColleges([]);
       setSelectedCollegeId('');
+      setDepartments([]);
       setSelectedDeptId('');
       setCurrentLevel('');
       setError(null);
+      return;
     }
-  }, [isOpen, needsProfile, fetchUniversities]);
+    fetchUniversities(selectedProgramType);
+  }, [isOpen, needsProfile, selectedProgramType, fetchUniversities]);
 
   useEffect(() => {
     if (!selectedUniId) {
@@ -109,8 +123,8 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
   }, [selectedCollegeId, fetchDepartments]);
 
   const handleSave = useCallback(async () => {
-    if (!selectedUniId) { setError('Select your university'); return; }
-    if (!selectedCollegeId) { setError('Select your college'); return; }
+    if (!selectedUniId) { setError(`Select your ${labelForProgramType(selectedProgramType).toLowerCase()}`); return; }
+    if (!selectedCollegeId) { setError(`Select your ${facultyLabelFor(selectedProgramType).toLowerCase()}`); return; }
     if (!selectedDeptId) { setError('Select your department'); return; }
 
     setSaving(true);
@@ -148,7 +162,7 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
     } finally {
       setSaving(false);
     }
-  }, [selectedUniId, selectedCollegeId, selectedDeptId, currentLevel, refreshProfile, qc]);
+  }, [selectedUniId, selectedCollegeId, selectedDeptId, currentLevel, selectedProgramType, refreshProfile, qc]);
 
   const handleStartChat = async (classmate: { id: string; fullName: string }) => {
     try {
@@ -191,9 +205,9 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
           {needsProfile ? (
             <div className="space-y-4 py-4">
               <div className="text-center">
-                <span className="text-3xl mb-2 block">🎓</span>
+                <span className="text-3xl mb-2 block">👥</span>
                 <p className="text-sm font-semibold text-gray-700">Set up your academic profile</p>
-                <p className="text-xs text-gray-500 mt-1">Select your university and department to find coursemates.</p>
+                <p className="text-xs text-gray-500 mt-1">Select your institution type and department to find coursemates.</p>
               </div>
 
               {error && (
@@ -203,72 +217,112 @@ export function ClassmateListModal({ isOpen, onClose, onCreated }: ClassmateList
               )}
 
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                  {selectedProgramType === 'polytechnic' ? 'Polytechnic' : selectedProgramType === 'college_of_education' ? 'College of Education' : 'University'}
-                </label>
-                <select
-                  value={selectedUniId}
-                  onChange={(e) => {
-                    const nextUniId = e.target.value;
-                    setSelectedUniId(nextUniId);
-                    setSelectedCollegeId('');
-                    setSelectedDeptId('');
-                    const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
-                    if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
-                  }}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                >
-                  <option value="">{universities.length === 0 ? 'No universities loaded' : 'Select your university'}</option>
-                  {universities.map((u) => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-2">Institution Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {PROGRAM_TYPES.map((type) => {
+                    const isSelected = selectedProgramType === type;
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => {
+                          if (type !== selectedProgramType) {
+                            setSelectedProgramType(type);
+                            setSelectedUniId('');
+                            setSelectedCollegeId('');
+                            setSelectedDeptId('');
+                            setCurrentLevel('');
+                          }
+                        }}
+                        className={`flex flex-col items-center gap-1 rounded-xl border-2 p-3 text-center transition-all ${
+                          isSelected
+                            ? 'border-blue-500 bg-blue-50 shadow-sm'
+                            : 'border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/50'
+                        }`}
+                      >
+                        <span className="text-2xl">{iconForProgramType(type)}</span>
+                        <span className={`text-xs font-bold ${isSelected ? 'text-blue-700' : 'text-gray-700'}`}>
+                          {labelForProgramType(type)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">College / Faculty</label>
-                <select
-                  value={selectedCollegeId}
-                  onChange={(e) => { setSelectedCollegeId(e.target.value); setSelectedDeptId(''); }}
-                  disabled={!selectedUniId}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
-                >
-                  <option value="">{colleges.length === 0 ? 'No colleges loaded' : 'Select your college'}</option>
-                  {colleges.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Department</label>
-                <select
-                  value={selectedDeptId}
-                  onChange={(e) => setSelectedDeptId(e.target.value)}
-                  disabled={!selectedCollegeId}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
-                >
-                  <option value="">{departments.length === 0 ? 'No departments loaded' : 'Select your department'}</option>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
+              {selectedProgramType && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      {labelForProgramType(selectedProgramType)}
+                    </label>
+                    <select
+                      value={selectedUniId}
+                      onChange={(e) => {
+                        const nextUniId = e.target.value;
+                        setSelectedUniId(nextUniId);
+                        setSelectedCollegeId('');
+                        setSelectedDeptId('');
+                        const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
+                        if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
+                      }}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    >
+                      <option value="">{universities.length === 0 ? 'No institutions loaded' : `Select ${labelForProgramType(selectedProgramType)}`}</option>
+                      {universities.map((u) => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                    </select>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                  Current Level <span className="text-gray-400 font-normal normal-case">(optional)</span>
-                </label>
-                <select
-                  value={currentLevel}
-                  onChange={(e) => setCurrentLevel(e.target.value)}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                >
-                  <option value="">Select your level</option>
-                  {levelOptions.map((lvl) => (
-                    <option key={lvl} value={lvl}>{lvl}</option>
-                  ))}
-                </select>
-              </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      {facultyLabelFor(selectedProgramType)}
+                    </label>
+                    <select
+                      value={selectedCollegeId}
+                      onChange={(e) => { setSelectedCollegeId(e.target.value); setSelectedDeptId(''); }}
+                      disabled={!selectedUniId}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+                    >
+                      <option value="">{colleges.length === 0 ? `No ${facultyLabelFor(selectedProgramType).toLowerCase()}s loaded` : `Select ${facultyLabelFor(selectedProgramType)}`}</option>
+                      {colleges.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Department</label>
+                    <select
+                      value={selectedDeptId}
+                      onChange={(e) => setSelectedDeptId(e.target.value)}
+                      disabled={!selectedCollegeId}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+                    >
+                      <option value="">{departments.length === 0 ? 'No departments loaded' : 'Select your department'}</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      Current Level <span className="text-gray-400 font-normal normal-case">(optional)</span>
+                    </label>
+                    <select
+                      value={currentLevel}
+                      onChange={(e) => setCurrentLevel(e.target.value)}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    >
+                      <option value="">Select your level</option>
+                      {levelOptions.map((lvl) => (
+                        <option key={lvl} value={lvl}>{lvl}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
 
               <button
                 onClick={handleSave}

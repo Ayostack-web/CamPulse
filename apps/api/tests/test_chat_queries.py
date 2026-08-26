@@ -81,7 +81,7 @@ async def test_list_conversations_single_round_trip_and_semantics(db_schema):
             alice, bob, convs = await _seed(db, 3)
 
             with _QueryCounter() as counter:
-                out = await list_conversations(user=_cu(bob), db=db)
+                out = await list_conversations(user=_cu(bob), db=db, limit=50)
 
             assert counter.count <= 2, f"expected <=2 queries, got {counter.count}"
             assert len(out) == 3
@@ -106,7 +106,6 @@ async def test_list_conversations_single_round_trip_and_semantics(db_schema):
             await db.execute(Message.__table__.delete())
             await db.execute(ConversationMember.__table__.delete())
             await db.execute(Conversation.__table__.delete())
-            await db.execute(User.__table__.where(User.id.in_([])).delete())
             await db.commit()
 
 

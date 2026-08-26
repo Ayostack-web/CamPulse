@@ -44,8 +44,14 @@ class UniversityOut(BaseModel):
 
 
 @router.get("", response_model=list[UniversityOut])
-async def list_universities(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(University).order_by(University.name))
+async def list_universities(
+    program_type: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(University).order_by(University.name)
+    if program_type:
+        query = query.where(University.program_type == program_type)
+    result = await db.execute(query)
     return result.scalars().all()
 
 

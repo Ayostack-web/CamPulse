@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/context/auth-context';
@@ -10,7 +11,8 @@ import { useStreakAndPoints, useUserBadges } from '@/queries/use-gamification';
 import { useTheme } from '@/providers/theme-provider';
 import { InviteModal } from '@/components/vylix-academic-hub/InviteModal';
 import { fetchReferralCode } from '@/lib/referral';
-import { levelOptionsFor, isLevelValidFor } from '@/lib/levels';
+import { levelOptionsFor, isLevelValidFor, labelForProgramType, facultyLabelFor, iconForProgramType, PROGRAM_TYPES } from '@/lib/levels';
+import type { ProgramType } from '@/lib/levels';
 
 interface University {
   id: string;
@@ -56,6 +58,7 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const [universities, setUniversities] = useState<University[]>([]);
   const [colleges, setColleges] = useState<College[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [selectedProgramType, setSelectedProgramType] = useState('');
   const [selectedUniId, setSelectedUniId] = useState('');
   const [selectedCollegeId, setSelectedCollegeId] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState('');
@@ -68,18 +71,20 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const [referralCode, setReferralCode] = useState('');
   const [referralEarned, setReferralEarned] = useState(0);
 
-  const selectedProgramType = universities.find((u) => u.id === selectedUniId)?.program_type;
   const levelOptions = levelOptionsFor(selectedProgramType);
 
-  const fetchUniversities = useCallback(async () => {
+  const fetchUniversities = useCallback(async (programType?: string) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
-      const res = await fetch('/api/colleges', {
+      const url = programType
+        ? `/api/colleges?program_type=${encodeURIComponent(programType)}`
+        : '/api/colleges';
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.ok) setUniversities(await res.json());
-    } catch { toast.error('Failed to load universities'); }
+    } catch { toast.error('Failed to load institutions'); }
   }, [supabase]);
 
   const fetchColleges = useCallback(async (universityId: string) => {
@@ -105,9 +110,17 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   }, [supabase]);
 
   useEffect(() => {
-    if (!isOpen) return;
-    fetchUniversities();
-  }, [isOpen, fetchUniversities]);
+    if (!isOpen || !selectedProgramType) {
+      setUniversities([]);
+      setSelectedUniId('');
+      setColleges([]);
+      setSelectedCollegeId('');
+      setDepartments([]);
+      setSelectedDeptId('');
+      return;
+    }
+    fetchUniversities(selectedProgramType);
+  }, [isOpen, selectedProgramType, fetchUniversities]);
 
   useEffect(() => {
     if (!selectedUniId) {
@@ -138,6 +151,13 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   }, [isOpen, universities, user?.collegeId, selectedUniId]);
 
   useEffect(() => {
+    if (!isOpen || !user?.programType) return;
+    if (!selectedProgramType) {
+      setSelectedProgramType(user.programType);
+    }
+  }, [isOpen, user?.programType, selectedProgramType]);
+
+  useEffect(() => {
     if (!isOpen) return;
     (async () => {
       try {
@@ -157,8 +177,8 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const enterEditMode = async () => {
     setFullName(user?.fullName || '');
     setCurrentLevel(user?.currentLevel || '');
-    const matchedUni = universities.find((u) => u.id === user?.collegeId);
-    setSelectedUniId(matchedUni?.id || '');
+    setSelectedProgramType(user?.programType || '');
+    setSelectedUniId('');
     setSelectedCollegeId('');
     setSelectedDeptId('');
     setError('');
@@ -215,6 +235,11 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
   const cancelEdit = () => {
     setIsEditing(false);
     setError('');
+    setSelectedProgramType('');
+    setSelectedUniId('');
+    setSelectedCollegeId('');
+    setSelectedDeptId('');
+    setCurrentLevel('');
   };
 
   const handleSave = useCallback(async () => {
@@ -402,72 +427,114 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                   className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
                 />
               </div>
+
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
-                  {selectedProgramType === 'polytechnic' ? 'Polytechnic' : selectedProgramType === 'college_of_education' ? 'College of Education' : 'University'}
-                </label>
-                <select
-                  value={selectedUniId}
-                  onChange={(e) => {
-                    const nextUniId = e.target.value;
-                    setSelectedUniId(nextUniId);
-                    setSelectedCollegeId('');
-                    setSelectedDeptId('');
-                    const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
-                    if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
-                  }}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                >
-                  <option value="">{universities.length === 0 ? 'No universities loaded' : 'Select University'}</option>
-                  {universities.map((u) => (
-                    <option key={u.id} value={u.id}>{u.name}</option>
-                  ))}
-                </select>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-2">Institution Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {PROGRAM_TYPES.map((type) => {
+                    const isSelected = selectedProgramType === type;
+                    return (
+                      <button
+                        key={type}
+                        type="button"
+                        onClick={() => {
+                          if (type !== selectedProgramType) {
+                            setSelectedProgramType(type);
+                            setSelectedUniId('');
+                            setSelectedCollegeId('');
+                            setSelectedDeptId('');
+                            setCurrentLevel('');
+                          }
+                        }}
+                        className={`flex flex-col items-center gap-1 rounded-xl border-2 p-3 text-center transition-all ${
+                          isSelected
+                            ? 'border-blue-500 bg-blue-50 shadow-sm'
+                            : 'border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/50'
+                        }`}
+                      >
+                        <span className="text-2xl">{iconForProgramType(type)}</span>
+                        <span className={`text-xs font-bold ${isSelected ? 'text-blue-700' : 'text-gray-700'}`}>
+                          {labelForProgramType(type)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">College / Faculty</label>
-                <select
-                  value={selectedCollegeId}
-                  onChange={(e) => {
-                    setSelectedCollegeId(e.target.value);
-                    setSelectedDeptId('');
-                  }}
-                  disabled={!selectedUniId}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
-                >
-                  <option value="">{colleges.length === 0 ? 'No colleges loaded' : 'Select College'}</option>
-                  {colleges.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Department</label>
-                <select
-                  value={selectedDeptId}
-                  onChange={(e) => setSelectedDeptId(e.target.value)}
-                  disabled={!selectedCollegeId}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
-                >
-                  <option value="">{departments.length === 0 ? 'No departments loaded' : 'Select Department'}</option>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Level</label>
-                <select
-                  value={currentLevel}
-                  onChange={(e) => setCurrentLevel(e.target.value)}
-                  className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                >
-                  <option value="">Select Level</option>
-                  {levelOptions.map((lvl) => (
-                    <option key={lvl} value={lvl}>{lvl}</option>
-                  ))}
-                </select>
-              </div>
+
+              {selectedProgramType && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      {labelForProgramType(selectedProgramType)}
+                    </label>
+                    <select
+                      value={selectedUniId}
+                      onChange={(e) => {
+                        const nextUniId = e.target.value;
+                        setSelectedUniId(nextUniId);
+                        setSelectedCollegeId('');
+                        setSelectedDeptId('');
+                        const nextType = universities.find((u) => u.id === nextUniId)?.program_type;
+                        if (!isLevelValidFor(nextType, currentLevel)) setCurrentLevel('');
+                      }}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    >
+                      <option value="">{universities.length === 0 ? 'No institutions loaded' : `Select ${labelForProgramType(selectedProgramType)}`}</option>
+                      {universities.map((u) => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">
+                      {facultyLabelFor(selectedProgramType)}
+                    </label>
+                    <select
+                      value={selectedCollegeId}
+                      onChange={(e) => {
+                        setSelectedCollegeId(e.target.value);
+                        setSelectedDeptId('');
+                      }}
+                      disabled={!selectedUniId}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+                    >
+                      <option value="">{colleges.length === 0 ? `No ${facultyLabelFor(selectedProgramType).toLowerCase()}s loaded` : `Select ${facultyLabelFor(selectedProgramType)}`}</option>
+                      {colleges.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Department</label>
+                    <select
+                      value={selectedDeptId}
+                      onChange={(e) => setSelectedDeptId(e.target.value)}
+                      disabled={!selectedCollegeId}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200 disabled:opacity-50"
+                    >
+                      <option value="">{departments.length === 0 ? 'No departments loaded' : 'Select Department'}</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Level</label>
+                    <select
+                      value={currentLevel}
+                      onChange={(e) => setCurrentLevel(e.target.value)}
+                      className="block w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    >
+                      <option value="">Select Level</option>
+                      {levelOptions.map((lvl) => (
+                        <option key={lvl} value={lvl}>{lvl}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={cancelEdit}
@@ -478,7 +545,7 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || !selectedProgramType}
                   className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 via-sky-600 to-cyan-400 px-4 py-2.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                   {saving ? (
@@ -517,7 +584,7 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                 )}
                 {user.collegeName && (
                   <div className="rounded-xl bg-blue-50 border border-blue-100 p-3 col-span-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">University</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">{labelForProgramType(user?.programType)}</p>
                     <p className="mt-1 font-semibold text-gray-900 text-sm">{user.collegeName}</p>
                   </div>
                 )}
@@ -620,7 +687,7 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Quick Links</p>
                 <div className="space-y-1.5">
-                  <a
+                  <Link
                     href="/pricing"
                     className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
                   >
@@ -628,8 +695,8 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     Pricing & Plans
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     href="/terms"
                     className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
                   >
@@ -637,8 +704,8 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     Terms of Service
-                  </a>
-                  <a
+                  </Link>
+                  <Link
                     href="/privacy"
                     className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
                   >
@@ -646,7 +713,7 @@ export function ProfileModal({ isOpen, onClose }: ProfileModalProps) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                     </svg>
                     Privacy Policy
-                  </a>
+                  </Link>
                 </div>
               </div>
             </>

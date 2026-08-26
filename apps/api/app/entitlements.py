@@ -104,7 +104,7 @@ async def entitlement_summary(
     """Aggregate entitlement state for the /ai-tokens endpoint.
 
     ``daily_used`` is the user's free-tier daily counter (used only when the
-    user holds no paid pass).
+    user holds no paid pass, or when enforcing the paid daily soft cap).
     """
     now = _now()
     passes = await active_passes(db, user_id)
@@ -112,6 +112,15 @@ async def entitlement_summary(
 
     quota_total = sum(p.quota_total for p in paid_passes)
     quota_used = sum(p.quota_used for p in paid_passes)
+
+    # Resolve the most restrictive daily cap across active paid passes.
+    daily_cap = None
+    for p in paid_passes:
+        if p.plan in plans.PLANS:
+            plan_cfg = plans.PLANS[p.plan]
+            if plan_cfg.daily_query_cap is not None:
+                if daily_cap is None or plan_cfg.daily_query_cap < daily_cap:
+                    daily_cap = plan_cfg.daily_query_cap
 
     if paid_passes:
         plan = max(paid_passes, key=lambda p: p.quota_total).plan
@@ -145,4 +154,6 @@ async def entitlement_summary(
         "storage_remaining_bytes": max(0, allowance - used_storage),
         "expires_at": str(expires) if expires else None,
         "has_paid_pass": bool(paid_passes),
+        "daily_query_cap": daily_cap,
+        "daily_queries_used": daily_used if daily_cap else None,
     }

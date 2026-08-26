@@ -175,9 +175,10 @@ async def test_entitlement_summary_paid(db_schema):
 
         summary = await entitlement_summary(db, user.id, user.created_at)
         assert summary["plan"] == "semester"
-        assert summary["quota_total"] == 2000
-        assert summary["quota_remaining"] == 1990
+        assert summary["quota_total"] == plans.get_plan("semester").query_quota
+        assert summary["quota_remaining"] == plans.get_plan("semester").query_quota - 10
         assert summary["has_paid_pass"] is True
+        assert summary["daily_query_cap"] == plans.PAID_DAILY_SOFT_CAP
 
 
 @pytest.mark.asyncio
@@ -189,3 +190,5 @@ async def test_entitlement_summary_free(db_schema):
         assert summary["quota_total"] == plans.FREE_DAILY_LIMIT
         assert summary["quota_remaining"] == plans.FREE_DAILY_LIMIT - 2
         assert summary["has_paid_pass"] is False
+        assert summary["daily_query_cap"] is None
+        assert summary["daily_queries_used"] is None

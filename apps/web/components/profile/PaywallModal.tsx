@@ -6,7 +6,7 @@ import { formatNaira, initializePaystackPayment } from '@/lib/payments';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useAiTokens, usePlans, type Plan } from '@/queries/use-ai-tokens';
 
-const PAYWALL_ORDER = ['night', 'semester', 'session'];
+const PAYWALL_ORDER = ['night', 'weekly', 'semester', 'session'];
 
 function durationLabel(days: number | null): string {
   if (!days) return 'Lifetime access';
@@ -53,6 +53,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
   const paidCards = (plans ?? []).filter((p) => p.paid);
   paidCards.sort((a, b) => PAYWALL_ORDER.indexOf(a.key) - PAYWALL_ORDER.indexOf(b.key));
   const topUp = (plans ?? []).find((p) => p.key === 'topup');
+  const topUpMini = (plans ?? []).find((p) => p.key === 'topup_mini');
 
   const handlePay = async (plan: Plan) => {
     if (!user) {
@@ -96,18 +97,35 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
           <p className="text-xs text-gray-500 mt-1 leading-relaxed">{subtitle}</p>
         </div>
 
-        {topUp && (
-          <button
-            onClick={() => handlePay(topUp)}
-            disabled={payingFor === topUp.key}
-            className="w-full flex items-center justify-between rounded-xl border-2 border-amber-300 bg-amber-50 p-4 hover:bg-amber-100 transition-all disabled:opacity-50 mb-4 text-left"
-          >
-            <div>
-              <p className="text-sm font-bold text-amber-800">Top-Up {topUp.query_quota?.toLocaleString()} AI queries</p>
-              <p className="text-[10px] text-amber-600 mt-0.5">Stacks on any pass · valid {durationLabel(topUp.duration_days)}</p>
-            </div>
-            <span className="text-sm font-black text-amber-800">{formatNaira(topUp.price_ngn)}</span>
-          </button>
+        {(topUp || topUpMini) && (
+          <div className="flex gap-2 mb-4">
+            {topUpMini && (
+              <button
+                onClick={() => handlePay(topUpMini)}
+                disabled={payingFor === topUpMini.key}
+                className="flex-1 flex items-center justify-between rounded-xl border-2 border-amber-200 bg-amber-50 p-3 hover:bg-amber-100 transition-all disabled:opacity-50 text-left"
+              >
+                <div>
+                  <p className="text-xs font-bold text-amber-800">Mini {topUpMini.query_quota} queries</p>
+                  <p className="text-[9px] text-amber-600 mt-0.5">Stacks · {durationLabel(topUpMini.duration_days)}</p>
+                </div>
+                <span className="text-xs font-black text-amber-800">{formatNaira(topUpMini.price_ngn)}</span>
+              </button>
+            )}
+            {topUp && (
+              <button
+                onClick={() => handlePay(topUp)}
+                disabled={payingFor === topUp.key}
+                className="flex-1 flex items-center justify-between rounded-xl border-2 border-amber-300 bg-amber-50 p-3 hover:bg-amber-100 transition-all disabled:opacity-50 text-left"
+              >
+                <div>
+                  <p className="text-xs font-bold text-amber-800">Top-Up {topUp.query_quota?.toLocaleString()} queries</p>
+                  <p className="text-[9px] text-amber-600 mt-0.5">Stacks · {durationLabel(topUp.duration_days)}</p>
+                </div>
+                <span className="text-sm font-black text-amber-800">{formatNaira(topUp.price_ngn)}</span>
+              </button>
+            )}
+          </div>
         )}
 
         <div className="space-y-3">
