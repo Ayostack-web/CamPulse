@@ -271,7 +271,7 @@ async def check_ai_rate_limit(
 async def check_payment_rate_limit(
     user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """Burst guard on payment endpoints — each verify call hits Paystack's API.
+    """Burst guard on payment endpoints — each verify call hits Monnify's API.
 
     Keyed by user ID in Redis so the limit holds across replicas; falls back
     to the per-process limiter when Redis is unreachable.

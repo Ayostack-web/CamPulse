@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
-import { formatNaira, initializePaystackPayment } from '@/lib/payments';
+import { formatNaira, initializeMonnifyPayment } from '@/lib/payments';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { useAiTokens, usePlans, type Plan } from '@/queries/use-ai-tokens';
 import { trackPaywallEvent } from '@/lib/analytics';
@@ -75,9 +75,9 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
     setPayingFor(plan.key);
     setError(null);
     try {
-      const { authorization_url } = await initializePaystackPayment(email, plan.key);
+      const { checkout_url } = await initializeMonnifyPayment(email, plan.key);
       trackPaywallEvent('checkout_started', plan.key);
-      window.location.assign(authorization_url);
+      window.location.assign(checkout_url);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Payment initialization failed. Please try again.');
       setPayingFor(null);
@@ -172,7 +172,7 @@ export function PaywallModal({ isOpen, onClose }: PaywallModalProps) {
                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                 }`}
               >
-                {payingFor === plan.key ? 'Redirecting to Paystack...' : `Get ${plan.name}`}
+                {payingFor === plan.key ? 'Redirecting to payment...' : `Get ${plan.name}`}
               </button>
             </div>
           ))}

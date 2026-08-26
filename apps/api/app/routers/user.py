@@ -43,6 +43,7 @@ class UserProfileOut(BaseModel):
     entry_year: int | None = None
     current_level: str | None = None
     status: str = "STUDENT"
+    role: str = "student"
     college_id: str | None = None
     department_id: str | None = None
     bio: str | None = None
@@ -100,7 +101,7 @@ async def get_profile(
     return UserProfileOut(
         id=u.id, full_name=u.full_name, matric_number=u.matric_number,
         entry_year=u.entry_year, current_level=u.current_level,
-        status=u.status.value,
+        status=u.status.value, role=u.role or "student",
         college_id=u.university_id, department_id=u.department_id,
         bio=u.bio, avatar_url=u.avatar_url, contribution_score=u.contribution_score,
         email_prompt_dismissed_at=str(u.email_prompt_dismissed_at) if u.email_prompt_dismissed_at else None,

@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/auth-context';
-import { formatNaira, initializePaystackPayment } from '@/lib/payments';
+import { formatNaira, initializeMonnifyPayment } from '@/lib/payments';
 import { getSupabaseBrowserClient } from '@/lib/supabase-client';
 import { usePlans, type Plan } from '@/queries/use-ai-tokens';
+import { trackPaywallEvent } from '@/lib/analytics';
 
 function durationLabel(days: number | null): string {
   if (!days) return 'No expiry';
@@ -52,7 +53,10 @@ export default function PricingPage() {
         const body = await res.json().catch(() => ({}));
         setPurchasedPlan(body.plan || null);
         setSuccess(true);
+        trackPaywallEvent('checkout_completed', body.plan);
         setTimeout(() => router.push('/'), 3000);
+      } else {
+        trackPaywallEvent('checkout_failed');
       }
     };
 
@@ -75,8 +79,9 @@ export default function PricingPage() {
 
     setLoadingKey(plan.key);
     try {
-      const { authorization_url } = await initializePaystackPayment(email, plan.key);
-      window.location.assign(authorization_url);
+      const { checkout_url } = await initializeMonnifyPayment(email, plan.key);
+      trackPaywallEvent('checkout_started', plan.key);
+      window.location.assign(checkout_url);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Payment initialization failed. Please try again.');
       setLoadingKey(null);
@@ -169,7 +174,7 @@ export default function PricingPage() {
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
                 >
-                  {loadingKey === plan.key ? 'Redirecting to Paystack...' : plan.paid ? `Pay ${formatNaira(plan.price_ngn)}` : 'Start Free'}
+                  {loadingKey === plan.key ? 'Redirecting to payment...' : plan.paid ? `Pay ${formatNaira(plan.price_ngn)}` : 'Start Free'}
                 </button>
               </div>
             ))}
@@ -177,7 +182,7 @@ export default function PricingPage() {
         )}
 
         <p className="text-xs text-gray-400 text-center mt-8">
-          Secured by Paystack · Free tier includes 5 AI queries/day
+          Secured by Monnify · Free tier includes 5 AI queries/day
         </p>
       </div>
     </div>

@@ -172,6 +172,7 @@ class User(Base):
     daily_tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     daily_tokens_limit: Mapped[int] = mapped_column(Integer, default=50)
     daily_tokens_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    role: Mapped[str] = mapped_column(String(16), default="student", server_default="student")
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now())
     updated_at: Mapped[str] = mapped_column(DateTime(timezone=True), default=_utcnow, server_default=func.now(), onupdate=func.now())
     last_active_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
@@ -209,6 +210,7 @@ class User(Base):
         Index("ix_users_university_id", "university_id"),
         Index("ix_users_current_level", "current_level"),
         Index("ix_users_status", "status"),
+        Index("ix_users_role", "role"),
     )
 
 
@@ -830,7 +832,7 @@ class Flashcard(Base):
     )
 
 
-# ── Subscriptions (Paystack Premium) ──────────────────────────────
+# ── Subscriptions (Monnify Premium) ─────────────────────────────
 
 class Subscription(Base):
     __tablename__ = "subscriptions"

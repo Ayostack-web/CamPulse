@@ -4,7 +4,7 @@ Every tier (including the AI Top-Ups) is defined here so the quota resolver,
 storage enforcement, payment activation and the public /plans endpoint all
 agree on the same numbers.
 
-Prices are in kobo (Paystack works in the minor unit of NGN).
+Prices are in kobo (Monnify works in the minor unit of NGN).
 
 Per-query pricing ladder (longer commitment = real discount):
   Night   → ₦2.00/query  (₦300  / 150 queries)
@@ -23,7 +23,7 @@ from datetime import timedelta
 MB = 1024 * 1024
 
 # Free tier daily AI query allowance.
-FREE_DAILY_LIMIT = 5
+FREE_DAILY_LIMIT = 3
 # Generous first-day allowance so new users see value before the wall tightens.
 FIRST_DAY_BOOST_LIMIT = 10
 FIRST_DAY_BOOST_DURATION = timedelta(hours=24)

@@ -89,12 +89,18 @@ class Settings(BaseSettings):
     google_redirect_uri: str = Field(default="http://localhost:4000/api/v1/google-drive/callback")
     frontend_url: str = Field(default="http://localhost:3000")
 
-    # Paystack
-    paystack_secret_key: str = Field(default="")
-    paystack_public_key: str = Field(default="")
+    # Monnify
+    monnify_api_key: str = Field(default="")
+    monnify_secret_key: str = Field(default="")
+    monnify_contract_code: str = Field(default="")
+    monnify_base_url: str = Field(default="https://sandbox.monnify.com")
+    monnify_webhook_secret: str = Field(default="")
 
     # Worker
     materials_worker_concurrency: int = Field(default=5)
+
+    # Admin — comma-separated emails that get admin role on first login
+    admin_emails: str = Field(default="")
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),

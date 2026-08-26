@@ -10,6 +10,7 @@ interface User {
   fullName: string;
   avatarUrl?: string;
   status?: 'STUDENT' | 'ALUMNI';
+  role?: 'student' | 'admin';
   entryYear?: number;
   matricNumber?: string;
   currentLevel?: string;
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 ...prev,
                 avatarUrl: profile.avatar_url ?? prev.avatarUrl,
                 status: profile.status,
+                role: profile.role,
                 entryYear: profile.entry_year,
                 matricNumber: profile.matric_number,
                 currentLevel: profile.current_level,

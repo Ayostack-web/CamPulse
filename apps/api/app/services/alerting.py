@@ -33,7 +33,7 @@ def alert_critical(
 ) -> None:
     """Emit a critical alert to Sentry + logs + optional webhook.
 
-    ``source`` labels where the alert originated (e.g. "paystack_webhook",
+    ``source`` labels where the alert originated (e.g. "monnify_webhook",
     "celery_worker", "db_connection").
 
     ``extra`` is attached as structured context to both Sentry and the log

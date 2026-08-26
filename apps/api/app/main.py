@@ -15,7 +15,7 @@ from app.routers import (
     health, colleges, courses, topics, user, materials,
     qna, gamification, settings as settings_router, collaboration, maintenance,
     documents, ws, google_drive, study_agent,
-    digest, flashcards, payments, plans, solved_bank,
+    digest, flashcards, payments, plans, solved_bank, admin,
 )
 from app.services.realtime import start_subscriber
 
@@ -123,3 +123,6 @@ app.include_router(plans.router, prefix=settings.api_prefix)
 
 # Solved Question Bank
 app.include_router(solved_bank.router, prefix=settings.api_prefix)
+
+# Admin dashboard
+app.include_router(admin.router, prefix=settings.api_prefix)
